@@ -202,9 +202,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       playoffWeekStart,
       matchups: matchups.map(m => {
         // Safe access to nested objects
-        const team1 = m.team1 as { display_name?: string; current_username?: string } | null
-        const team2 = m.team2 as { display_name?: string; current_username?: string } | null
-        const winner = m.winner as { display_name?: string; current_username?: string } | null
+        const team1 = m.team1 as unknown as { display_name?: string; current_username?: string } | null
+        const team2 = m.team2 as unknown as { display_name?: string; current_username?: string } | null
+        const winner = m.winner as unknown as { display_name?: string; current_username?: string } | null
         
         return {
           week: m.week,
@@ -229,8 +229,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }),
       standings,
       weeklyScores: weeklyScores.map(s => {
-        const manager = s.manager as { display_name?: string; current_username?: string } | null
-        const opponent = s.opponent as { display_name?: string; current_username?: string } | null
+        const manager = s.manager as unknown as { display_name?: string; current_username?: string } | null
+        const opponent = s.opponent as unknown as { display_name?: string; current_username?: string } | null
         
         return {
           managerName: manager?.display_name || manager?.current_username || 'Unknown',
@@ -252,11 +252,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         median,
         highest: weekScores[0] || 0,
         lowest: weekScores[weekScores.length - 1] || 0,
-        topScorer: (topScorer?.manager as { display_name?: string; current_username?: string } | null)?.display_name 
-          || (topScorer?.manager as { display_name?: string; current_username?: string } | null)?.current_username 
+        topScorer: (topScorer?.manager as unknown as { display_name?: string; current_username?: string } | null)?.display_name 
+          || (topScorer?.manager as unknown as { display_name?: string; current_username?: string } | null)?.current_username 
           || 'Unknown',
-        bottomScorer: (bottomScorer?.manager as { display_name?: string; current_username?: string } | null)?.display_name 
-          || (bottomScorer?.manager as { display_name?: string; current_username?: string } | null)?.current_username 
+        bottomScorer: (bottomScorer?.manager as unknown as { display_name?: string; current_username?: string } | null)?.display_name 
+          || (bottomScorer?.manager as unknown as { display_name?: string; current_username?: string } | null)?.current_username 
           || 'Unknown',
       },
     }

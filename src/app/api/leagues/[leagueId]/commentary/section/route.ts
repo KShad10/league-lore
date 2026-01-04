@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase/server';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { generateSingleCommentary, CommentaryConfig } from '@/lib/ai';
 import { VoicePreset, ReportTemplate, PROMPTS } from '@/lib/ai/prompts';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 interface RouteParams {
   params: Promise<{ leagueId: string }>;
@@ -32,6 +28,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const { leagueId } = await params;
 
   try {
+    const supabase = await createClient();
+    
+    // Verify user is authenticated
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     const body = await request.json();
     const {
       type,
@@ -58,7 +65,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     };
 
     // Fetch league context
-    const leagueContext = await fetchLeagueContext(leagueId);
+    const leagueContext = await fetchLeagueContext(supabase, leagueId);
     if (leagueContext) {
       config.leagueContext = leagueContext;
     }
@@ -74,7 +81,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         );
       }
 
-      const data = await fetchSectionData(leagueId, parseInt(season), parseInt(week), section);
+      const data = await fetchSectionData(supabase, leagueId, parseInt(season), parseInt(week), section);
       content = await generateSingleCommentary(promptType as keyof typeof PROMPTS, data, config);
     } else if (type === 'postseason') {
       const promptType = POSTSEASON_SECTION_MAP[section];
@@ -85,7 +92,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         );
       }
 
-      const data = await fetchPostseasonSectionData(leagueId, parseInt(season), section);
+      const data = await fetchPostseasonSectionData(supabase, leagueId, parseInt(season), section);
       content = await generateSingleCommentary(promptType as keyof typeof PROMPTS, data, config);
     } else {
       return NextResponse.json(
@@ -102,7 +109,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 }
 
 // Fetch league context
-async function fetchLeagueContext(leagueId: string) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchLeagueContext(supabase: SupabaseClient<any, any, any>, leagueId: string) {
   try {
     const { data: league } = await supabase
       .from('leagues')
@@ -136,7 +144,9 @@ async function fetchLeagueContext(leagueId: string) {
 }
 
 // Fetch data for a specific weekly section
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchSectionData(
+  supabase: SupabaseClient<any, any, any>,
   leagueId: string,
   season: number,
   week: number,
@@ -227,6 +237,11 @@ async function fetchSectionData(
   const topScorer = weeklyScores?.find(s => s.weekly_rank === 1);
   const bottomScorer = weeklyScores?.find(s => s.weekly_rank === (weeklyScores?.length || 10));
 
+  const getManagerName = (s: { manager?: unknown } | null) => {
+    const mgr = s?.manager as unknown as { display_name?: string; current_username?: string } | null;
+    return mgr?.display_name || mgr?.current_username || 'Unknown';
+  };
+
   // Build section-specific data
   switch (section) {
     case 'opener': {
@@ -236,9 +251,9 @@ async function fetchSectionData(
       return {
         season,
         week,
-        topScorer: topScorer?.manager?.display_name || topScorer?.manager?.current_username || 'Unknown',
+        topScorer: getManagerName(topScorer),
         topScore: scores[0] || 0,
-        bottomScorer: bottomScorer?.manager?.display_name || bottomScorer?.manager?.current_username || 'Unknown',
+        bottomScorer: getManagerName(bottomScorer),
         bottomScore: scores[scores.length - 1] || 0,
         biggestBlowout: parseFloat(sortedByMargin[0]?.point_differential) || 0,
         closestMargin: parseFloat(sortedByMargin[sortedByMargin.length - 1]?.point_differential) || 0,
@@ -261,7 +276,7 @@ async function fetchSectionData(
 
     case 'topPerformerSpotlight':
       return {
-        name: topScorer?.manager?.display_name || topScorer?.manager?.current_username || 'Unknown',
+        name: getManagerName(topScorer),
         score: scores[0] || 0,
         rank: 1,
         allPlayRecord: `${topScorer?.allplay_wins || 0}-${topScorer?.allplay_losses || 0}`,
@@ -269,7 +284,7 @@ async function fetchSectionData(
 
     case 'bottomPerformerRoast':
       return {
-        name: bottomScorer?.manager?.display_name || bottomScorer?.manager?.current_username || 'Unknown',
+        name: getManagerName(bottomScorer),
         score: scores[scores.length - 1] || 0,
         rank: weeklyScores?.length || 10,
         allPlayRecord: `${bottomScorer?.allplay_wins || 0}-${bottomScorer?.allplay_losses || 0}`,
@@ -315,7 +330,9 @@ async function fetchSectionData(
 }
 
 // Fetch data for a specific postseason section
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function fetchPostseasonSectionData(
+  supabase: SupabaseClient<any, any, any>,
   leagueId: string,
   season: number,
   section: string
@@ -379,24 +396,31 @@ async function fetchPostseasonSectionData(
   const getName = (m: { display_name?: string; current_username?: string } | null) =>
     m?.display_name || m?.current_username || 'Unknown';
 
-  const champion = getName(championshipGame?.winner);
+  const champWinner = championshipGame?.winner as unknown as { display_name?: string; current_username?: string } | null;
+  const champTeam1 = championshipGame?.team1 as unknown as { display_name?: string; current_username?: string } | null;
+  const champTeam2 = championshipGame?.team2 as unknown as { display_name?: string; current_username?: string } | null;
+  
+  const champion = getName(champWinner);
   const championId = championshipGame?.winner_manager_id || '';
   const runnerUpId = championshipGame?.team1_manager_id === championId
     ? championshipGame?.team2_manager_id
     : championshipGame?.team1_manager_id;
   const runnerUp = championshipGame?.team1_manager_id === championId
-    ? getName(championshipGame?.team2)
-    : getName(championshipGame?.team1);
+    ? getName(champTeam2)
+    : getName(champTeam1);
 
   let toiletBowlLoser = 'Unknown';
   let toiletBowlLoserId = '';
   if (toiletBowlFinal) {
+    const tbTeam1 = toiletBowlFinal.team1 as unknown as { display_name?: string; current_username?: string } | null;
+    const tbTeam2 = toiletBowlFinal.team2 as unknown as { display_name?: string; current_username?: string } | null;
+    
     toiletBowlLoserId = toiletBowlFinal.team1_manager_id === toiletBowlFinal.winner_manager_id
       ? toiletBowlFinal.team2_manager_id
       : toiletBowlFinal.team1_manager_id;
     toiletBowlLoser = toiletBowlFinal.team1_manager_id === toiletBowlFinal.winner_manager_id
-      ? getName(toiletBowlFinal.team2)
-      : getName(toiletBowlFinal.team1);
+      ? getName(tbTeam2)
+      : getName(tbTeam1);
   }
 
   switch (section) {
@@ -416,8 +440,11 @@ async function fetchPostseasonSectionData(
       const championMatchups = playoffMatchups
         .filter(m => m.winner_manager_id === championId && !m.is_toilet_bowl)
         .map(m => {
+          const mTeam1 = m.team1 as unknown as { display_name?: string; current_username?: string } | null;
+          const mTeam2 = m.team2 as unknown as { display_name?: string; current_username?: string } | null;
+          
           const loserId = m.team1_manager_id === championId ? m.team2_manager_id : m.team1_manager_id;
-          const loserName = m.team1_manager_id === championId ? getName(m.team2) : getName(m.team1);
+          const loserName = m.team1_manager_id === championId ? getName(mTeam2) : getName(mTeam1);
           const maxWeek = Math.max(...playoffMatchups.filter(pm => !pm.is_toilet_bowl).map(pm => pm.week));
           let round = 'Round';
           if (m.week === maxWeek) round = 'Championship';
