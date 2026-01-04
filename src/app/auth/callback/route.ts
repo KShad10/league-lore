@@ -23,14 +23,12 @@ export async function GET(request: Request) {
       }
     }
     
-    // Pass error info to error page for debugging
     console.error('Auth callback error:', error.message)
     const errorUrl = new URL(`${origin}/auth/auth-code-error`)
     errorUrl.searchParams.set('error', error.message)
     return NextResponse.redirect(errorUrl.toString())
   }
 
-  // No code provided
   const errorUrl = new URL(`${origin}/auth/auth-code-error`)
   errorUrl.searchParams.set('error', 'No code provided')
   return NextResponse.redirect(errorUrl.toString())
