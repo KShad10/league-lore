@@ -233,7 +233,7 @@ export default function ReportsPage() {
       <header className="reports-header">
         <div className="header-left">
           <h1>{currentLeague.name}</h1>
-          <span className="header-meta">{currentLeague.total_rosters} Teams • {currentLeague.first_season}–{currentLeague.current_season}</span>
+          <span className="header-meta">{currentLeague.team_count} Teams • {currentLeague.first_season}–{currentLeague.current_season}</span>
         </div>
       </header>
 
