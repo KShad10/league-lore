@@ -176,24 +176,24 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // Track outcomes
       if (matchupType === 'Championship' && m.winner_manager_id) {
         if (m.winner_manager_id === m.team1_manager_id) {
-          champion = team1?.display_name || team1?.current_username
+          champion = team1?.display_name || team1?.current_username || null
           championSeed = seed1
-          runnerUp = team2?.display_name || team2?.current_username
+          runnerUp = team2?.display_name || team2?.current_username || null
           runnerUpSeed = seed2
         } else {
-          champion = team2?.display_name || team2?.current_username
+          champion = team2?.display_name || team2?.current_username || null
           championSeed = seed2
-          runnerUp = team1?.display_name || team1?.current_username
+          runnerUp = team1?.display_name || team1?.current_username || null
           runnerUpSeed = seed1
         }
       }
       
       if (matchupType === 'Last Place' && m.winner_manager_id) {
         if (m.winner_manager_id === m.team1_manager_id) {
-          toiletBowlLoser = team2?.display_name || team2?.current_username
+          toiletBowlLoser = team2?.display_name || team2?.current_username || null
           toiletBowlLoserSeed = seed2
         } else {
-          toiletBowlLoser = team1?.display_name || team1?.current_username
+          toiletBowlLoser = team1?.display_name || team1?.current_username || null
           toiletBowlLoserSeed = seed1
         }
       }
