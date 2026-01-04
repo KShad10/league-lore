@@ -69,6 +69,68 @@ export default function ReportsPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [generatedAt, setGeneratedAt] = useState<Date | null>(null)
 
+  // localStorage key for this league's report
+  const getStorageKey = useCallback(() => {
+    return currentLeague ? `league-lore-report-${currentLeague.id}` : null
+  }, [currentLeague])
+
+  // Save report to localStorage
+  const saveToLocalStorage = useCallback((html: string, config: {
+    reportType: ReportType
+    season: string
+    week: string
+    template: ReportTemplate
+    voice: VoicePreset
+    customVoice: string
+    useAiCommentary: boolean
+    sections: ReportSection[]
+  }, timestamp: Date) => {
+    const key = getStorageKey()
+    if (!key) return
+    try {
+      localStorage.setItem(key, JSON.stringify({
+        html,
+        config,
+        generatedAt: timestamp.toISOString()
+      }))
+    } catch (e) {
+      console.warn('Failed to save report to localStorage:', e)
+    }
+  }, [getStorageKey])
+
+  // Load report from localStorage on mount
+  useEffect(() => {
+    const key = getStorageKey()
+    if (!key || reportHtml) return // Don't overwrite if we already have a report
+    
+    try {
+      const saved = localStorage.getItem(key)
+      if (saved) {
+        const { html, config, generatedAt: savedAt } = JSON.parse(saved)
+        
+        // Restore config
+        if (config.reportType) setReportType(config.reportType)
+        if (config.season) setSeason(config.season)
+        if (config.week) setWeek(config.week)
+        if (config.template) setTemplate(config.template)
+        if (config.voice) setVoice(config.voice)
+        if (config.customVoice) setCustomVoice(config.customVoice)
+        if (typeof config.useAiCommentary === 'boolean') setUseAiCommentary(config.useAiCommentary)
+        if (config.sections) setSections(config.sections)
+        
+        // Restore report
+        setReportHtml(html)
+        const blob = new Blob([html], { type: 'text/html' })
+        const blobUrl = URL.createObjectURL(blob)
+        setReportUrl(blobUrl)
+        setGeneratedAt(new Date(savedAt))
+        setProgress({ status: 'complete' })
+      }
+    } catch (e) {
+      console.warn('Failed to load report from localStorage:', e)
+    }
+  }, [getStorageKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Build week options - just numbers for regular season, labels for playoffs
   const getWeekOptions = useCallback(() => {
     const options = []
@@ -109,11 +171,25 @@ export default function ReportsPage() {
       if (event.data?.type === 'contentChange' && event.data?.html) {
         setEditedHtml(event.data.html)
         setHasUnsavedChanges(true)
+        
+        // Update localStorage with edited content
+        if (generatedAt) {
+          saveToLocalStorage(event.data.html, {
+            reportType,
+            season,
+            week,
+            template,
+            voice,
+            customVoice,
+            useAiCommentary,
+            sections,
+          }, generatedAt)
+        }
       }
     }
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [])
+  }, [saveToLocalStorage, generatedAt, reportType, season, week, template, voice, customVoice, useAiCommentary, sections])
 
   const toggleSection = (sectionId: string) => {
     setSections(prev => prev.map(s => 
@@ -209,7 +285,20 @@ export default function ReportsPage() {
       const blob = new Blob([editableHtml], { type: 'text/html' })
       const blobUrl = URL.createObjectURL(blob)
       setReportUrl(blobUrl)
-      setGeneratedAt(new Date())
+      const timestamp = new Date()
+      setGeneratedAt(timestamp)
+      
+      // Save to localStorage for persistence across refreshes
+      saveToLocalStorage(editableHtml, {
+        reportType,
+        season,
+        week,
+        template,
+        voice,
+        customVoice,
+        useAiCommentary,
+        sections,
+      }, timestamp)
       
       setProgress({ status: 'complete' })
     } catch (err) {
