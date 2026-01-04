@@ -97,7 +97,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       name: m.name,
       combinedWins: m.combinedWins,
       pointsFor: Math.round(m.pointsFor * 100) / 100,
-      bracket: (i + 1) <= playoffTeams ? 'playoff' : 'toilet_bowl',
+      bracket: ((i + 1) <= playoffTeams ? 'playoff' : 'toilet_bowl') as 'playoff' | 'toilet_bowl',
       hasBye: byeSeeds.includes(i + 1),
     }))
     
