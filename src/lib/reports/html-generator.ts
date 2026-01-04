@@ -302,6 +302,16 @@ export const reportStylesheet = `
     padding-top: 0.5rem;
   }
   
+  .matchup-commentary {
+    font-size: ${fontSize.small};
+    color: ${colors.textPrimary};
+    font-style: italic;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed ${colors.borderLight};
+    line-height: 1.5;
+  }
+  
   /* Badges */
   .badge {
     display: inline-block;
@@ -456,6 +466,7 @@ export interface MatchupCardData {
   team2: { name: string; seed?: number; score: number; isWinner: boolean };
   margin: number;
   cardClass?: string;
+  commentary?: string; // AI-generated commentary for this matchup
 }
 
 export const html: {
@@ -546,6 +557,7 @@ export const html: {
         </div>
       </div>
       <div class="matchup-margin">Margin: ${matchup.margin.toFixed(2)}</div>
+      ${matchup.commentary ? `<div class="matchup-commentary">${matchup.commentary}</div>` : ''}
     </div>
   `,
   

@@ -265,22 +265,31 @@ export function generateWeeklyReport(data: WeeklyReportData, options: ReportOpti
   
   // Matchups Section
   if (sections.matchups?.enabled) {
-    const matchupCards = matchups.map(m => ({
-      type: m.matchupType || classifyMatchup(m.pointDifferential).label,
-      week: m.week,
-      team1: {
-        name: m.team1.name,
-        score: m.team1.points,
-        isWinner: m.winner.managerId === m.team1.managerId,
-      },
-      team2: {
-        name: m.team2.name,
-        score: m.team2.points,
-        isWinner: m.winner.managerId === m.team2.managerId,
-      },
-      margin: m.pointDifferential,
-      cardClass: m.isPlayoff ? 'playoff' : '',
-    }));
+    const matchupCards = matchups.map(m => {
+      // Look up AI commentary for this matchup
+      const winnerName = m.winner.managerId === m.team1.managerId ? m.team1.name : m.team2.name;
+      const loserName = m.winner.managerId === m.team1.managerId ? m.team2.name : m.team1.name;
+      const commentaryKey = `${winnerName} vs ${loserName}`;
+      const matchupCommentary = commentary?.matchupCommentaries?.[commentaryKey];
+      
+      return {
+        type: m.matchupType || classifyMatchup(m.pointDifferential).label,
+        week: m.week,
+        team1: {
+          name: m.team1.name,
+          score: m.team1.points,
+          isWinner: m.winner.managerId === m.team1.managerId,
+        },
+        team2: {
+          name: m.team2.name,
+          score: m.team2.points,
+          isWinner: m.winner.managerId === m.team2.managerId,
+        },
+        margin: m.pointDifferential,
+        cardClass: m.isPlayoff ? 'playoff' : '',
+        commentary: matchupCommentary,
+      };
+    });
     
     reportSections.push(html.section('Matchup Results', html.matchupGrid(matchupCards)));
   }
