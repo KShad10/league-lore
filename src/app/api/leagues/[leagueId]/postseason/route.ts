@@ -299,7 +299,8 @@ async function getPlayoffMatchups(supabase: any, leagueId: string, season: numbe
   
   if (error) throw error
   
-  return (matchups || []).map(m => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (matchups || []).map((m: any) => {
     const team1 = m.team1 as { display_name?: string; current_username?: string } | null
     const team2 = m.team2 as { display_name?: string; current_username?: string } | null
     const winner = m.winner as { display_name?: string; current_username?: string } | null
