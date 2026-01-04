@@ -29,8 +29,9 @@ const DEFAULT_SECTIONS: ReportSection[] = [
   { id: 'standings', title: 'Standings', enabled: true },
   { id: 'matchups', title: 'Matchup Recaps', enabled: true },
   { id: 'awards', title: 'Awards', enabled: true },
-  { id: 'powerRankings', title: 'Power Rankings', enabled: true },
-  { id: 'transactions', title: 'Transactions', enabled: true },
+  { id: 'powerRankings', title: 'Power Rankings', enabled: false },
+  { id: 'playoffPicture', title: 'Playoff Picture', enabled: true },
+  { id: 'transactions', title: 'Transactions', enabled: false },
   { id: 'injuries', title: 'Injury Report', enabled: false },
 ]
 
@@ -53,10 +54,12 @@ export default function ReportsPage() {
   const [voice, setVoice] = useState<VoicePreset>('supreme_leader')
   const [customVoice, setCustomVoice] = useState('')
   const [sections, setSections] = useState<ReportSection[]>(DEFAULT_SECTIONS)
+  const [useAiCommentary, setUseAiCommentary] = useState(true)
 
   // Generation State
   const [progress, setProgress] = useState<GenerationProgress>({ status: 'idle' })
   const [reportUrl, setReportUrl] = useState<string | null>(null)
+  const [reportHtml, setReportHtml] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // Editing State
@@ -109,30 +112,72 @@ export default function ReportsPage() {
     ))
   }
 
+  // Convert sections array to config object for API
+  const getSectionsConfig = () => {
+    const config: Record<string, { enabled: boolean }> = {}
+    sections.forEach(s => {
+      config[s.id] = { enabled: s.enabled }
+    })
+    return config
+  }
+
   const generateReport = async () => {
     if (!currentLeague) return
     
     setProgress({ status: 'generating', currentSection: 'Initializing...' })
     setError(null)
     setReportUrl(null)
+    setReportHtml(null)
 
     try {
-      setProgress({ status: 'generating', currentSection: 'Building report data...' })
+      const baseUrl = `/api/leagues/${currentLeague.id}/reports/${reportType}`
       
-      let url = `/api/leagues/${currentLeague.id}/reports/${reportType}?season=${season}`
-      if (reportType === 'weekly') {
-        url += `&week=${week}`
-      }
-
-      const checkResponse = await fetch(`${url}&format=json`)
+      // First check if data exists with GET (fast)
+      setProgress({ status: 'generating', currentSection: 'Checking data availability...' })
+      const checkUrl = `${baseUrl}?season=${season}${reportType === 'weekly' ? `&week=${week}` : ''}&format=json`
+      const checkResponse = await fetch(checkUrl)
       const checkData = await checkResponse.json()
 
       if (!checkData.success) {
         throw new Error(checkData.error || 'Failed to generate report')
       }
 
-      setProgress({ status: 'generating', currentSection: 'Rendering preview...' })
-      setReportUrl(url)
+      // Now generate full report with POST (includes AI commentary)
+      setProgress({ 
+        status: 'generating', 
+        currentSection: useAiCommentary ? 'Generating AI commentary...' : 'Building report...'
+      })
+      
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          season: parseInt(season),
+          week: parseInt(week),
+          sections: getSectionsConfig(),
+          voice,
+          template,
+          customVoice: voice === 'custom' ? customVoice : undefined,
+          useAiCommentary,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to generate report')
+      }
+
+      // Get the HTML content
+      const html = await response.text()
+      setReportHtml(html)
+      
+      // Create a blob URL for the iframe
+      const blob = new Blob([html], { type: 'text/html' })
+      const blobUrl = URL.createObjectURL(blob)
+      setReportUrl(blobUrl)
+      
       setProgress({ status: 'complete' })
     } catch (err) {
       setError(String(err))
@@ -147,11 +192,9 @@ export default function ReportsPage() {
   }
 
   const copyHtml = async () => {
-    if (!reportUrl) return
+    if (!reportHtml) return
     try {
-      const response = await fetch(reportUrl)
-      const html = await response.text()
-      await navigator.clipboard.writeText(html)
+      await navigator.clipboard.writeText(reportHtml)
       // Could add toast notification here
     } catch (err) {
       setError(`Copy failed: ${err}`)
@@ -159,11 +202,9 @@ export default function ReportsPage() {
   }
 
   const downloadHtml = async () => {
-    if (!reportUrl) return
+    if (!reportHtml) return
     try {
-      const response = await fetch(reportUrl)
-      const html = await response.text()
-      const blob = new Blob([html], { type: 'text/html' })
+      const blob = new Blob([reportHtml], { type: 'text/html' })
       const downloadUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = downloadUrl
@@ -176,6 +217,15 @@ export default function ReportsPage() {
       setError(`Download failed: ${err}`)
     }
   }
+
+  // Cleanup blob URL on unmount or when report changes
+  useEffect(() => {
+    return () => {
+      if (reportUrl && reportUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(reportUrl)
+      }
+    }
+  }, [reportUrl])
 
   const selectedVoice = VOICE_PRESETS[voice]
   const selectedTemplate = REPORT_TEMPLATES[template]
@@ -300,6 +350,18 @@ export default function ReportsPage() {
                 disabled={isGenerating}
               />
             )}
+            
+            {/* AI Commentary Toggle */}
+            <label className="ai-toggle">
+              <input 
+                type="checkbox"
+                checked={useAiCommentary}
+                onChange={() => setUseAiCommentary(!useAiCommentary)}
+                disabled={isGenerating}
+              />
+              <span>Generate AI commentary</span>
+              <span className="ai-toggle-hint">(slower but personalized)</span>
+            </label>
           </section>
 
           {/* Sections Toggle */}
@@ -331,7 +393,7 @@ export default function ReportsPage() {
             {isGenerating ? (
               <>
                 <span className="spinner" />
-                Generating...
+                {progress.currentSection || 'Generating...'}
               </>
             ) : (
               'Generate Report'
@@ -436,6 +498,10 @@ export default function ReportsPage() {
                 <div className="metadata-item">
                   <span className="metadata-label">Voice</span>
                   <span className="metadata-value">{selectedVoice.name}</span>
+                </div>
+                <div className="metadata-item">
+                  <span className="metadata-label">AI Commentary</span>
+                  <span className="metadata-value">{useAiCommentary ? 'Enabled' : 'Disabled'}</span>
                 </div>
                 <div className="metadata-item">
                   <span className="metadata-label">Generated</span>
@@ -678,6 +744,29 @@ export default function ReportsPage() {
           background: var(--background);
           color: var(--foreground);
           resize: vertical;
+        }
+
+        /* AI Toggle */
+        .ai-toggle {
+          display: flex;
+          align-items: center;
+          gap: var(--space-sm);
+          padding: var(--space-sm) 0;
+          margin-top: var(--space-md);
+          font-size: 0.8125rem;
+          cursor: pointer;
+          border-top: 1px solid var(--border-light);
+          padding-top: var(--space-md);
+        }
+
+        .ai-toggle input {
+          accent-color: var(--accent-primary);
+        }
+        
+        .ai-toggle-hint {
+          font-size: 0.6875rem;
+          color: var(--text-muted);
+          margin-left: auto;
         }
 
         /* Sections Toggle */

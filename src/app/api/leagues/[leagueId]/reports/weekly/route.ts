@@ -1,17 +1,95 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateWeeklyReport, WeeklyReportData } from '@/lib/reports'
+import { generateWeeklyReport, WeeklyReportData, ReportSections } from '@/lib/reports'
+import { generateWeeklyCommentary, WeeklyCommentary, CommentaryConfig } from '@/lib/ai'
+import { VoicePreset, ReportTemplate } from '@/lib/ai/prompts'
 
 interface RouteParams {
   params: Promise<{ leagueId: string }>
 }
 
+// Default sections config
+const DEFAULT_SECTIONS: ReportSections = {
+  standings: { enabled: true },
+  matchups: { enabled: true },
+  awards: { enabled: true },
+  powerRankings: { enabled: false },
+  transactions: { enabled: false },
+  injuries: { enabled: false },
+  playoffPicture: { enabled: true }, // Auto-enabled based on week
+}
+
+// GET handler - backwards compatible, uses defaults
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const { leagueId } = await params
   const { searchParams } = new URL(request.url)
   const season = searchParams.get('season')
   const week = searchParams.get('week')
   const format = searchParams.get('format') || 'html'
+  
+  return handleReportGeneration(leagueId, {
+    season,
+    week,
+    format,
+    sections: DEFAULT_SECTIONS,
+    voice: 'supreme_leader',
+    template: 'standard',
+    useAiCommentary: false, // GET requests use static phrases for speed
+  })
+}
+
+// POST handler - accepts full configuration
+export async function POST(request: NextRequest, { params }: RouteParams) {
+  const { leagueId } = await params
+  const { searchParams } = new URL(request.url)
+  const format = searchParams.get('format') || 'html'
+  
+  try {
+    const body = await request.json()
+    const {
+      season,
+      week,
+      sections = DEFAULT_SECTIONS,
+      voice = 'supreme_leader',
+      template = 'standard',
+      customVoice,
+      useAiCommentary = true,
+    } = body
+    
+    return handleReportGeneration(leagueId, {
+      season: String(season),
+      week: String(week),
+      format,
+      sections,
+      voice,
+      template,
+      customVoice,
+      useAiCommentary,
+    })
+  } catch (error) {
+    return NextResponse.json(
+      { success: false, error: `Invalid request body: ${error}` },
+      { status: 400 }
+    )
+  }
+}
+
+interface GenerationOptions {
+  season: string | null
+  week: string | null
+  format: string
+  sections: ReportSections
+  voice: VoicePreset
+  template: ReportTemplate
+  customVoice?: string
+  useAiCommentary: boolean
+}
+
+async function handleReportGeneration(
+  leagueId: string,
+  options: GenerationOptions
+): Promise<NextResponse> {
+  const { season, week, format, sections, voice, template, customVoice, useAiCommentary } = options
   
   if (!season || !week) {
     return NextResponse.json(
@@ -172,6 +250,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .map((s, i) => ({
         rank: i + 1,
         displayName: s.displayName,
+        managerId: s.managerId,
         record: {
           h2h: { wins: s.h2hWins, losses: s.h2hLosses },
           median: { wins: s.medianWins, losses: s.medianLosses },
@@ -195,6 +274,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       (parseFloat(s.points_for) || 0) < (parseFloat(min.points_for) || 0) ? s : min
     , weeklyScores[0])
     
+    // Build matchup records map
+    const recordsMap = new Map(
+      standings.map(s => [s.managerId, `${s.record.combined.wins}-${s.record.combined.losses}`])
+    )
+    
     // Build report data with safe access
     const reportData: WeeklyReportData = {
       season: seasonNum,
@@ -202,8 +286,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       playoffWeekStart,
       matchups: matchups.map(m => {
         // Safe access to nested objects
-        const team1 = m.team1 as unknown as { display_name?: string; current_username?: string } | null
-        const team2 = m.team2 as unknown as { display_name?: string; current_username?: string } | null
+        const team1 = m.team1 as unknown as { id: string; display_name?: string; current_username?: string } | null
+        const team2 = m.team2 as unknown as { id: string; display_name?: string; current_username?: string } | null
         const winner = m.winner as unknown as { display_name?: string; current_username?: string } | null
         
         return {
@@ -229,10 +313,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }),
       standings,
       weeklyScores: weeklyScores.map(s => {
-        const manager = s.manager as unknown as { display_name?: string; current_username?: string } | null
+        const manager = s.manager as unknown as { id: string; display_name?: string; current_username?: string } | null
         const opponent = s.opponent as unknown as { display_name?: string; current_username?: string } | null
         
         return {
+          managerId: manager?.id || '',
           managerName: manager?.display_name || manager?.current_username || 'Unknown',
           points: {
             for: parseFloat(s.points_for) || 0,
@@ -261,13 +346,94 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       },
     }
     
-    // Return based on format
-    if (format === 'json') {
-      return NextResponse.json({ success: true, data: reportData })
+    // Generate AI commentary if requested
+    let commentary: WeeklyCommentary | undefined
+    if (useAiCommentary) {
+      try {
+        // Get league context for AI
+        const { data: league } = await supabase
+          .from('leagues')
+          .select('name')
+          .eq('id', leagueId)
+          .single()
+        
+        const { data: managers } = await supabase
+          .from('managers')
+          .select('current_username, display_name, nickname, context_notes')
+          .eq('league_id', leagueId)
+          .eq('is_active', true)
+        
+        const commentaryConfig: CommentaryConfig = {
+          voice,
+          template,
+          customVoice: voice === 'custom' ? customVoice : undefined,
+          leagueContext: {
+            leagueName: league?.name || 'Dynasty League',
+            format: 'SuperFlex, 0.5 TE Premium',
+            scoringType: 'H2H + Median (dual scoring)',
+            playoffFormat: '6 teams qualify, seeds 1-2 get byes, weeks 15-17',
+            managers: managers?.map(m => ({
+              username: m.current_username,
+              displayName: m.display_name || undefined,
+              nickname: m.nickname || undefined,
+              contextNotes: m.context_notes || undefined,
+            })),
+          },
+        }
+        
+        // Transform data for commentary generator
+        const commentaryData = {
+          season: seasonNum,
+          week: weekNum,
+          playoffWeekStart,
+          summary: reportData.summary,
+          matchups: reportData.matchups.map(m => {
+            const isTeam1Winner = m.winner.managerId === m.team1.managerId
+            return {
+              winner: isTeam1Winner ? m.team1.name : m.team2.name,
+              winnerScore: isTeam1Winner ? m.team1.points : m.team2.points,
+              loser: isTeam1Winner ? m.team2.name : m.team1.name,
+              loserScore: isTeam1Winner ? m.team2.points : m.team1.points,
+              margin: m.pointDifferential,
+              winnerRecord: recordsMap.get(m.winner.managerId) || '0-0',
+              loserRecord: recordsMap.get(isTeam1Winner ? m.team2.managerId : m.team1.managerId) || '0-0',
+            }
+          }),
+          standings: standings.map(s => ({
+            rank: s.rank,
+            name: s.displayName,
+            combinedWins: s.record.combined.wins,
+            combinedLosses: s.record.combined.losses,
+            pointsFor: s.points.for,
+          })),
+          weeklyScores: reportData.weeklyScores.map(s => ({
+            name: s.managerName,
+            score: s.points.for,
+            rank: s.results.weeklyRank,
+            allPlayWins: s.results.allPlayWins,
+            allPlayLosses: s.results.allPlayLosses,
+          })),
+        }
+        
+        commentary = await generateWeeklyCommentary(commentaryData, commentaryConfig)
+      } catch (aiError) {
+        console.error('AI commentary generation failed, falling back to static:', aiError)
+        // Continue without AI commentary - will use static phrases
+      }
     }
     
-    // Generate HTML report
-    const htmlReport = generateWeeklyReport(reportData)
+    // Return based on format
+    if (format === 'json') {
+      return NextResponse.json({ 
+        success: true, 
+        data: reportData,
+        commentary,
+        sections,
+      })
+    }
+    
+    // Generate HTML report with sections config and commentary
+    const htmlReport = generateWeeklyReport(reportData, { sections, commentary })
     
     return new NextResponse(htmlReport, {
       headers: {
