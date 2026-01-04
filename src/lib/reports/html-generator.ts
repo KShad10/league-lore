@@ -20,7 +20,7 @@ function renderMarkdown(text: string): string {
 export const reportStylesheet = `
   @page {
     size: letter;
-    margin: 0.75in 0.75in 1in 0.75in;
+    margin: 0.6in 0.7in 0.8in 0.7in;
   }
   
   @media print {
@@ -35,17 +35,48 @@ export const reportStylesheet = `
       width: 100%;
       margin: 0;
       padding: 0;
+      background: white !important;
     }
     
     body {
       padding: 0 !important;
-      font-size: 11pt;
+      font-size: 10.5pt;
+      line-height: 1.5;
     }
     
     .report-container {
       max-width: none !important;
       width: 100% !important;
       padding: 0 !important;
+      background: white !important;
+    }
+    
+    /* Reduce spacing in print */
+    .section-header {
+      margin-top: 1.25rem;
+      margin-bottom: 0.75rem;
+    }
+    
+    p {
+      margin-bottom: 0.75rem;
+    }
+    
+    .stat-grid {
+      margin: 1rem 0;
+    }
+    
+    .matchup-grid {
+      gap: 0.75rem;
+    }
+    
+    .matchup-card {
+      padding: 0.75rem;
+    }
+    
+    .matchup-commentary {
+      font-size: 9pt;
+      margin-top: 0.5rem;
+      padding-top: 0.5rem;
     }
     
     /* Page break utilities */

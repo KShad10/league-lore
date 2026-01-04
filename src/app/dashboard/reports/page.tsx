@@ -69,15 +69,15 @@ export default function ReportsPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [generatedAt, setGeneratedAt] = useState<Date | null>(null)
 
-  // Build week options
+  // Build week options - just numbers for regular season, labels for playoffs
   const getWeekOptions = useCallback(() => {
     const options = []
     for (let i = 1; i <= 14; i++) {
-      options.push({ value: String(i), label: `Week ${i}` })
+      options.push({ value: String(i), label: String(i) })
     }
-    options.push({ value: '15', label: 'Playoffs R1' })
-    options.push({ value: '16', label: 'Playoffs R2' })
-    options.push({ value: '17', label: 'Championship' })
+    options.push({ value: '15', label: '15 (R1)' })
+    options.push({ value: '16', label: '16 (R2)' })
+    options.push({ value: '17', label: '17 (Ship)' })
     return options
   }, [])
 
@@ -309,12 +309,6 @@ export default function ReportsPage() {
 
   return (
     <div className="reports-page">
-      {/* Header */}
-      <header className="page-header">
-        <h1>{currentLeague.name}</h1>
-        <p className="header-meta">{currentLeague.team_count} Teams • {currentLeague.first_season}–{currentLeague.current_season}</p>
-      </header>
-
       {/* Main Layout */}
       <div className="main-layout">
         {/* Left: Configuration Panel */}
@@ -633,7 +627,7 @@ export default function ReportsPage() {
         .reports-page {
           display: flex;
           flex-direction: column;
-          height: calc(100vh - 60px);
+          height: calc(100vh - 120px);
           overflow: hidden;
         }
 
@@ -642,25 +636,6 @@ export default function ReportsPage() {
           align-items: center;
           justify-content: center;
           height: 100%;
-        }
-
-        /* Page Header */
-        .page-header {
-          padding: 16px 24px;
-          background: var(--accent-primary);
-          color: white;
-        }
-
-        .page-header h1 {
-          margin: 0;
-          font-size: 1.25rem;
-          font-weight: 600;
-        }
-
-        .header-meta {
-          margin: 4px 0 0;
-          font-size: 0.8125rem;
-          opacity: 0.85;
         }
 
         /* Main Layout */
