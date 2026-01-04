@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { ReactNode } from 'react'
 import { UserMenu } from '@/components/ui/UserMenu'
 import { LeagueProvider, useLeague } from '@/lib/context/LeagueContext'
@@ -15,7 +15,6 @@ const NAV_ITEMS = [
 
 function DashboardNav() {
   const pathname = usePathname()
-  const router = useRouter()
   const { currentLeague, leagues, setCurrentLeague, loading } = useLeague()
 
   return (
@@ -42,7 +41,7 @@ function DashboardNav() {
       </div>
 
       <div className="nav-right">
-        {/* League Selector */}
+        {/* League Selector - only show if multiple leagues */}
         {!loading && leagues.length > 1 && (
           <select
             value={currentLeague?.id || ''}
@@ -83,12 +82,20 @@ function LeagueHeader() {
     return null
   }
 
+  // Clean up league name - remove redundant "EST. XXXX" if present
+  const cleanName = currentLeague.name.replace(/,?\s*(EST\.?\s*\d{4})/i, '').trim()
+  
+  // Build season range string
+  const seasonRange = currentLeague.first_season === currentLeague.current_season
+    ? `${currentLeague.first_season} Season`
+    : `${currentLeague.first_season}–${currentLeague.current_season}`
+
   return (
     <div className="league-header">
       <div className="league-header-content">
-        <h1 className="league-name">{currentLeague.name}</h1>
+        <h1 className="league-name">{cleanName}</h1>
         <p className="league-meta">
-          {currentLeague.team_count} teams • Est. {currentLeague.first_season}
+          {currentLeague.team_count} Teams • {seasonRange}
         </p>
       </div>
     </div>
@@ -193,7 +200,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         
         .league-header {
           background: var(--surface);
-          border-bottom: 2px solid var(--accent-primary);
+          border-bottom: 2px solid var(--border-light);
           padding: var(--space-lg) var(--space-xl);
           text-align: center;
         }
@@ -205,11 +212,12 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         
         .league-name {
           font-family: var(--font-serif);
-          font-size: 1.75rem;
+          font-size: 1.5rem;
           font-weight: 700;
           color: var(--accent-primary);
           margin: 0 0 var(--space-xs);
           letter-spacing: 0.02em;
+          text-transform: uppercase;
         }
         
         .league-name-loading {
@@ -220,9 +228,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         
         .league-meta {
           font-family: var(--font-sans);
-          font-size: 0.875rem;
+          font-size: 0.8125rem;
           color: var(--text-muted);
           margin: 0;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
         }
         
         .dashboard-main {

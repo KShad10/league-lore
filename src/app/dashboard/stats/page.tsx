@@ -54,6 +54,7 @@ export default function StatsPage() {
   const [h2hManager, setH2hManager] = useState('')
   const [h2hMatchupType, setH2hMatchupType] = useState('all')
   const [managerList, setManagerList] = useState<{ id: string; name: string }[]>([])
+  const [allManagers, setAllManagers] = useState<{ id: string; displayName: string; username: string }[]>([])
   const [data, setData] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -71,6 +72,24 @@ export default function StatsPage() {
       if (!season) {
         setSeason(String(currentLeague.current_season))
       }
+    }
+  }, [currentLeague])
+
+  // Fetch all managers for the league (used for empty season display)
+  useEffect(() => {
+    if (currentLeague) {
+      fetch(`/api/leagues/${currentLeague.id}/managers`)
+        .then(res => res.json())
+        .then(result => {
+          if (result.success && result.managers) {
+            setAllManagers(result.managers.map((m: { id: string; displayName: string; username: string }) => ({
+              id: m.id,
+              displayName: m.displayName,
+              username: m.username,
+            })))
+          }
+        })
+        .catch(() => {})
     }
   }, [currentLeague])
 
@@ -135,6 +154,11 @@ export default function StatsPage() {
   const isAllSeasons = !season
   const showSeasonFilter = !['managers', 'h2h'].includes(activeTab)
   const showWeekFilter = ['weekly', 'matchups'].includes(activeTab)
+  
+  // Check if viewing a future/empty season
+  const currentYear = new Date().getFullYear()
+  const selectedSeason = season ? parseInt(season) : currentLeague?.current_season || currentYear
+  const isUpcomingSeason = selectedSeason >= currentYear && new Date().getMonth() < 8 // Before September
 
   // Show loading while checking for league
   if (leagueLoading) {
@@ -230,7 +254,7 @@ export default function StatsPage() {
       </div>
 
       {/* Context Banner */}
-      {(activeTab === 'standings' || activeTab === 'streaks') && data && (
+      {(activeTab === 'standings' || activeTab === 'streaks') && data && !isUpcomingSeason && (
         <InfoBanner>
           Showing regular season only (Weeks 1-
           {(data as { regularSeasonWeeks?: number }).regularSeasonWeeks || 14}).
@@ -248,10 +272,18 @@ export default function StatsPage() {
       {/* Content */}
       {data && !loading && (
         <div className="section-block">
-          {activeTab === 'standings' && <StandingsContent data={data} isAllSeasons={isAllSeasons} />}
-          {activeTab === 'postseason' && <PostseasonContent data={data} season={season} />}
-          {activeTab === 'matchups' && <MatchupsContent data={data} />}
-          {activeTab === 'weekly' && <WeeklyContent data={data} />}
+          {activeTab === 'standings' && (
+            <StandingsContent 
+              data={data} 
+              isAllSeasons={isAllSeasons} 
+              selectedSeason={selectedSeason}
+              isUpcomingSeason={isUpcomingSeason}
+              allManagers={allManagers}
+            />
+          )}
+          {activeTab === 'postseason' && <PostseasonContent data={data} season={season} isUpcomingSeason={isUpcomingSeason} />}
+          {activeTab === 'matchups' && <MatchupsContent data={data} isUpcomingSeason={isUpcomingSeason} />}
+          {activeTab === 'weekly' && <WeeklyContent data={data} isUpcomingSeason={isUpcomingSeason} />}
           {activeTab === 'managers' && <ManagersContent data={data} />}
           {activeTab === 'h2h' && <H2HContent data={data} />}
           {activeTab === 'streaks' && <StreaksContent data={data} isAllSeasons={isAllSeasons} />}
@@ -282,13 +314,53 @@ type StandingRow = {
 function StandingsContent({
   data,
   isAllSeasons,
+  selectedSeason,
+  isUpcomingSeason,
+  allManagers,
 }: {
   data: Record<string, unknown>
   isAllSeasons: boolean
+  selectedSeason: number
+  isUpcomingSeason: boolean
+  allManagers: { id: string; displayName: string; username: string }[]
 }) {
   const standings = (data.standings as Array<Record<string, unknown>>) || []
 
+  // If no standings data and viewing upcoming season, show placeholder
   if (standings.length === 0) {
+    if (isUpcomingSeason && allManagers.length > 0) {
+      return (
+        <>
+          <SectionHeader
+            title={`${selectedSeason} Standings`}
+            context="Season Not Started"
+          />
+          
+          <InfoBanner>
+            The {selectedSeason} NFL season hasn&apos;t started yet. Standings will populate once games begin in September.
+          </InfoBanner>
+
+          <DataTable
+            columns={[
+              { key: 'rank', header: '#', width: '50px', className: 'col-rank' },
+              { key: 'displayName', header: 'Manager', align: 'left' as const, className: 'col-manager' },
+              { key: 'h2h', header: 'H2H', render: () => <span className="text-muted">0-0</span> },
+              { key: 'median', header: 'Median', render: () => <span className="text-muted">0-0</span> },
+              { key: 'combined', header: 'Combined', render: () => <span className="text-muted">0-0</span> },
+              { key: 'allPlay', header: 'All-Play', render: () => <span className="text-muted">0-0</span> },
+              { key: 'pf', header: 'PF', render: () => <span className="text-muted">0.00</span> },
+              { key: 'pa', header: 'PA', render: () => <span className="text-muted">0.00</span> },
+            ]}
+            data={allManagers.map((m, i) => ({
+              rank: i + 1,
+              displayName: m.displayName || m.username,
+            }))}
+            keyExtractor={(row) => row.displayName}
+          />
+        </>
+      )
+    }
+    
     return <EmptyState title="No standings data available" />
   }
 
@@ -298,7 +370,7 @@ function StandingsContent({
     <>
       <SectionHeader
         title="Standings"
-        context={isAllSeasons ? 'All Seasons Combined' : 'Season Record'}
+        context={isAllSeasons ? 'All Seasons Combined' : `${selectedSeason} Season`}
       />
 
       <DataTable
@@ -405,12 +477,25 @@ function StandingsContent({
 function PostseasonContent({
   data,
   season,
+  isUpcomingSeason,
 }: {
   data: Record<string, unknown>
   season: string
+  isUpcomingSeason: boolean
 }) {
   const summary = data.summary as Record<string, unknown> | undefined
   const seedings = (data.seedings as Array<Record<string, unknown>>) || []
+
+  if (isUpcomingSeason || (seedings.length === 0 && !summary)) {
+    return (
+      <>
+        <SectionHeader title="Postseason" context={`${season || '2026'} Season`} />
+        <InfoBanner>
+          The {season || '2026'} postseason hasn&apos;t started yet. Playoff brackets will appear after the regular season concludes.
+        </InfoBanner>
+      </>
+    )
+  }
 
   return (
     <>
@@ -674,15 +759,21 @@ type MatchupRow = {
   matchupType: string
 }
 
-function MatchupsContent({ data }: { data: Record<string, unknown> }) {
+function MatchupsContent({ data, isUpcomingSeason }: { data: Record<string, unknown>; isUpcomingSeason: boolean }) {
   const matchups = (data.matchups as Array<Record<string, unknown>>) || []
   const summary = data.summary as Record<string, unknown> | undefined
 
-  if (matchups.length === 0) {
+  if (matchups.length === 0 || isUpcomingSeason) {
     return (
       <>
-        <SectionHeader title="Matchups" context="No data" />
-        <EmptyState title="No matchups found" description="Try adjusting your filters" />
+        <SectionHeader title="Matchups" context={isUpcomingSeason ? "Season Not Started" : "No data"} />
+        {isUpcomingSeason ? (
+          <InfoBanner>
+            Matchup results will appear once the season begins in September.
+          </InfoBanner>
+        ) : (
+          <EmptyState title="No matchups found" description="Try adjusting your filters" />
+        )}
       </>
     )
   }
@@ -803,15 +894,21 @@ type WeeklyRow = {
   }
 }
 
-function WeeklyContent({ data }: { data: Record<string, unknown> }) {
+function WeeklyContent({ data, isUpcomingSeason }: { data: Record<string, unknown>; isUpcomingSeason: boolean }) {
   const scores = (data.scores as Array<Record<string, unknown>>) || []
   const summary = data.summary as Record<string, unknown> | undefined
 
-  if (scores.length === 0) {
+  if (scores.length === 0 || isUpcomingSeason) {
     return (
       <>
-        <SectionHeader title="Weekly Scores" context="No data" />
-        <EmptyState title="No scores found" description="Try adjusting your filters" />
+        <SectionHeader title="Weekly Scores" context={isUpcomingSeason ? "Season Not Started" : "No data"} />
+        {isUpcomingSeason ? (
+          <InfoBanner>
+            Weekly scores will appear once the season begins in September.
+          </InfoBanner>
+        ) : (
+          <EmptyState title="No scores found" description="Try adjusting your filters" />
+        )}
       </>
     )
   }
