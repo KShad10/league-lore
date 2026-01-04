@@ -316,15 +316,14 @@ ${getWordCountInstruction(template, 'opener')}`;
     context: PromptContext
   ) => {
     const template = REPORT_TEMPLATES[context.template];
-    return `Write commentary for this matchup:
+    const [min, max] = template.wordCounts.matchup;
+    return `Write BRIEF commentary for this matchup (${min}-${max} words MAX — be concise!):
 
-${data.winner} (${data.winnerRecord}) defeated ${data.loser} (${data.loserRecord})
-Score: ${data.winnerScore} - ${data.loserScore} (margin: ${data.margin})
-${data.isPlayoff ? `Matchup type: ${data.matchupType}` : 'Regular season matchup'}
+${data.winner} (${data.winnerRecord}) def. ${data.loser} (${data.loserRecord})
+Score: ${data.winnerScore.toFixed(2)} - ${data.loserScore.toFixed(2)} | Margin: ${data.margin.toFixed(2)}
+${data.isPlayoff ? `Type: ${data.matchupType}` : ''}
 
-What's the story here? Was it expected? A blowout? A nail-biter?
-
-${getWordCountInstruction(template, 'matchup')}`;
+ONE key insight only. 2-3 sentences max. No preamble.`;
   },
 
   standingsAnalysis: (

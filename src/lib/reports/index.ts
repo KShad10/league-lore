@@ -1,6 +1,6 @@
 // Reports module exports
 export { cobChroniclesTheme, reportStyles, signaturePhrases, reportTypes } from './theme';
-export { generateHtmlDocument, html, reportStylesheet } from './html-generator';
+export { generateHtmlDocument, html, reportStylesheet, renderMarkdown } from './html-generator';
 export { generateWeeklyReport } from './weekly-report';
 export type { WeeklyReportData, MatchupData, StandingsEntry, WeeklyScore, ReportSections, ReportOptions } from './weekly-report';
 export { generatePostseasonReport } from './postseason-report';

@@ -56,13 +56,18 @@ export default function ReportsPage() {
   
   // Mobile UI state
   const [showConfig, setShowConfig] = useState(false)
-  const [showExport, setShowExport] = useState(false)
+  const [showSectionsExpanded, setShowSectionsExpanded] = useState(false)
 
   // Generation State
   const [progress, setProgress] = useState<GenerationProgress>({ status: 'idle' })
   const [reportUrl, setReportUrl] = useState<string | null>(null)
   const [reportHtml, setReportHtml] = useState<string | null>(null)
+  const [editedHtml, setEditedHtml] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const [generatedAt, setGeneratedAt] = useState<Date | null>(null)
 
   // Build week options
   const getWeekOptions = useCallback(() => {
@@ -98,6 +103,18 @@ export default function ReportsPage() {
     }
   }, [leagueLoading, currentLeague, router])
 
+  // Listen for WYSIWYG changes from iframe
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'contentChange' && event.data?.html) {
+        setEditedHtml(event.data.html)
+        setHasUnsavedChanges(true)
+      }
+    }
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [])
+
   const toggleSection = (sectionId: string) => {
     setSections(prev => prev.map(s => 
       s.id === sectionId ? { ...s, enabled: !s.enabled } : s
@@ -112,14 +129,42 @@ export default function ReportsPage() {
     return config
   }
 
+  const enabledSectionsCount = sections.filter(s => s.enabled).length
+
+  // Make HTML editable by adding contenteditable attributes
+  const makeEditable = (html: string): string => {
+    // Add contenteditable to key elements
+    return html
+      .replace(/<p>/g, '<p contenteditable="true">')
+      .replace(/<div class="callout/g, '<div contenteditable="true" class="callout')
+      .replace(/<div class="highlight-box/g, '<div contenteditable="true" class="highlight-box')
+      .replace(/<div class="matchup-commentary/g, '<div contenteditable="true" class="matchup-commentary')
+      .replace(/<h1 class="report-title/g, '<h1 contenteditable="true" class="report-title')
+      .replace(/<\/head>/, `
+        <script>
+          document.addEventListener('input', function(e) {
+            if (e.target.hasAttribute('contenteditable')) {
+              window.parent?.postMessage({
+                type: 'contentChange',
+                html: document.querySelector('.report-container').innerHTML
+              }, '*');
+            }
+          });
+        </script>
+        </head>
+      `)
+  }
+
   const generateReport = async () => {
     if (!currentLeague) return
     
-    setShowConfig(false) // Close config on mobile
+    setShowConfig(false)
     setProgress({ status: 'generating', currentSection: 'Initializing...' })
     setError(null)
     setReportUrl(null)
     setReportHtml(null)
+    setEditedHtml(null)
+    setHasUnsavedChanges(false)
 
     try {
       const baseUrl = `/api/leagues/${currentLeague.id}/reports/${reportType}`
@@ -158,11 +203,13 @@ export default function ReportsPage() {
       }
 
       const html = await response.text()
-      setReportHtml(html)
+      const editableHtml = makeEditable(html)
+      setReportHtml(editableHtml)
       
-      const blob = new Blob([html], { type: 'text/html' })
+      const blob = new Blob([editableHtml], { type: 'text/html' })
       const blobUrl = URL.createObjectURL(blob)
       setReportUrl(blobUrl)
+      setGeneratedAt(new Date())
       
       setProgress({ status: 'complete' })
     } catch (err) {
@@ -171,29 +218,70 @@ export default function ReportsPage() {
     }
   }
 
+  const saveDraft = async () => {
+    if (!currentLeague) return
+    
+    setIsSaving(true)
+    setSaveMessage(null)
+    
+    try {
+      const response = await fetch(`/api/leagues/${currentLeague.id}/reports/drafts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          season: parseInt(season),
+          week: reportType === 'weekly' ? parseInt(week) : null,
+          reportType,
+          html: editedHtml || reportHtml,
+          config: {
+            template,
+            voice,
+            customVoice: voice === 'custom' ? customVoice : undefined,
+            useAiCommentary,
+            sections: getSectionsConfig(),
+          },
+        }),
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to save draft')
+      }
+      
+      setHasUnsavedChanges(false)
+      setSaveMessage('Draft saved!')
+      setTimeout(() => setSaveMessage(null), 3000)
+    } catch (err) {
+      setSaveMessage('Failed to save')
+      setTimeout(() => setSaveMessage(null), 3000)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   const exportPdf = () => {
     if (iframeRef.current) {
       printIframe(iframeRef.current)
     }
-    setShowExport(false)
   }
 
   const copyHtml = async () => {
-    if (!reportHtml) return
-    await navigator.clipboard.writeText(reportHtml)
-    setShowExport(false)
+    const htmlToExport = editedHtml || reportHtml
+    if (!htmlToExport) return
+    await navigator.clipboard.writeText(htmlToExport)
+    setSaveMessage('Copied!')
+    setTimeout(() => setSaveMessage(null), 2000)
   }
 
   const downloadHtml = () => {
-    if (!reportHtml) return
-    const blob = new Blob([reportHtml], { type: 'text/html' })
+    const htmlToExport = editedHtml || reportHtml
+    if (!htmlToExport) return
+    const blob = new Blob([htmlToExport], { type: 'text/html' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     a.download = `report-${season}-week${week}.html`
     a.click()
     URL.revokeObjectURL(url)
-    setShowExport(false)
   }
 
   useEffect(() => {
@@ -221,265 +309,331 @@ export default function ReportsPage() {
 
   return (
     <div className="reports-page">
-      {/* Action Bar */}
-      <div className="action-bar">
-        <div className="context">
-          <span className="context-label">{season}</span>
-          {reportType === 'weekly' && <span className="context-label">• Wk {week}</span>}
-        </div>
-        <div className="actions">
-          <button 
-            className="btn-config-toggle"
-            onClick={() => setShowConfig(!showConfig)}
-            aria-label="Toggle configuration"
-          >
-            ⚙️
-          </button>
-          <button 
-            className="btn-generate"
-            onClick={generateReport}
-            disabled={isGenerating}
-          >
-            {isGenerating ? (
-              <>
-                <span className="spinner" />
-                <span className="btn-text">Generating...</span>
-              </>
-            ) : (
-              <span className="btn-text">Generate</span>
-            )}
-          </button>
-          {hasReport && (
-            <div className="export-dropdown">
-              <button 
-                className="btn-export"
-                onClick={() => setShowExport(!showExport)}
-              >
-                Export
-              </button>
-              {showExport && (
-                <div className="dropdown-menu">
-                  <button onClick={exportPdf}>Download PDF</button>
-                  <button onClick={copyHtml}>Copy HTML</button>
-                  <button onClick={downloadHtml}>Save HTML</button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Header */}
+      <header className="page-header">
+        <h1>{currentLeague.name}</h1>
+        <p className="header-meta">{currentLeague.total_rosters} Teams • {currentLeague.first_season}–{currentLeague.current_season}</p>
+      </header>
 
       {/* Main Layout */}
       <div className="main-layout">
-        {/* Left: Configuration */}
+        {/* Left: Configuration Panel */}
         <aside className={`config-panel ${isGenerating ? 'disabled' : ''} ${showConfig ? 'mobile-open' : ''}`}>
-          <div className="config-header-mobile">
-            <span>Configuration</span>
+          <div className="config-mobile-header">
+            <span>Report Settings</span>
             <button onClick={() => setShowConfig(false)} className="close-btn">✕</button>
           </div>
           
-          <div className="config-scroll">
-            <div className="config-group">
-              <label>Report Type</label>
-              <div className="radio-group">
-                <label className={`radio-option ${reportType === 'weekly' ? 'selected' : ''}`}>
-                  <input 
-                    type="radio" 
-                    checked={reportType === 'weekly'} 
-                    onChange={() => setReportType('weekly')}
-                    disabled={isGenerating}
-                  />
-                  <span>Weekly</span>
-                </label>
-                <label className={`radio-option ${reportType === 'postseason' ? 'selected' : ''}`}>
-                  <input 
-                    type="radio" 
-                    checked={reportType === 'postseason'} 
-                    onChange={() => setReportType('postseason')}
-                    disabled={isGenerating}
-                  />
-                  <span>Postseason</span>
-                </label>
+          <div className="config-content">
+            {/* Report Type Toggle */}
+            <div className="config-section">
+              <div className="toggle-group">
+                <button 
+                  className={`toggle-btn ${reportType === 'weekly' ? 'active' : ''}`}
+                  onClick={() => setReportType('weekly')}
+                  disabled={isGenerating}
+                >
+                  Weekly
+                </button>
+                <button 
+                  className={`toggle-btn ${reportType === 'postseason' ? 'active' : ''}`}
+                  onClick={() => setReportType('postseason')}
+                  disabled={isGenerating}
+                >
+                  Postseason
+                </button>
               </div>
             </div>
 
-            <div className="config-row-inline">
-              {reportType === 'weekly' && (
-                <div className="config-group flex-1">
-                  <label>Week</label>
-                  <select value={week} onChange={(e) => setWeek(e.target.value)} disabled={isGenerating}>
-                    {weekOptions.map(opt => (
+            {/* Week & Season */}
+            <div className="config-section">
+              <div className="field-row">
+                {reportType === 'weekly' && (
+                  <div className="field">
+                    <label htmlFor="week-select">Week</label>
+                    <select 
+                      id="week-select"
+                      value={week} 
+                      onChange={(e) => setWeek(e.target.value)} 
+                      disabled={isGenerating}
+                    >
+                      {weekOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="field">
+                  <label htmlFor="season-select">Season</label>
+                  <select 
+                    id="season-select"
+                    value={season} 
+                    onChange={(e) => setSeason(e.target.value)} 
+                    disabled={isGenerating}
+                  >
+                    {seasonOptions.map(opt => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
                 </div>
-              )}
-
-              <div className="config-group flex-1">
-                <label>Season</label>
-                <select value={season} onChange={(e) => setSeason(e.target.value)} disabled={isGenerating}>
-                  {seasonOptions.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
               </div>
             </div>
 
-            <div className="config-row-inline">
-              <div className="config-group flex-1">
-                <label>Template</label>
-                <select value={template} onChange={(e) => setTemplate(e.target.value as ReportTemplate)} disabled={isGenerating}>
+            {/* Template */}
+            <div className="config-section">
+              <div className="field">
+                <label htmlFor="template-select">Template</label>
+                <select 
+                  id="template-select"
+                  value={template} 
+                  onChange={(e) => setTemplate(e.target.value as ReportTemplate)} 
+                  disabled={isGenerating}
+                >
                   {Object.values(REPORT_TEMPLATES).map(t => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
                 </select>
+                <span className="field-hint">{REPORT_TEMPLATES[template].description}</span>
               </div>
+            </div>
 
-              <div className="config-group flex-1">
-                <label>Voice</label>
-                <select value={voice} onChange={(e) => setVoice(e.target.value as VoicePreset)} disabled={isGenerating}>
+            {/* Voice */}
+            <div className="config-section">
+              <div className="field">
+                <label htmlFor="voice-select">Voice</label>
+                <select 
+                  id="voice-select"
+                  value={voice} 
+                  onChange={(e) => setVoice(e.target.value as VoicePreset)} 
+                  disabled={isGenerating}
+                >
                   {Object.values(VOICE_PRESETS).map(v => (
                     <option key={v.id} value={v.id}>{v.name}</option>
                   ))}
                 </select>
+                <span className="field-hint">{VOICE_PRESETS[voice].description}</span>
               </div>
             </div>
 
             {voice === 'custom' && (
-              <div className="config-group">
-                <textarea
-                  value={customVoice}
-                  onChange={(e) => setCustomVoice(e.target.value.slice(0, 150))}
-                  placeholder="Describe your custom voice..."
-                  maxLength={150}
-                  disabled={isGenerating}
-                />
+              <div className="config-section">
+                <div className="field">
+                  <label htmlFor="custom-voice">Custom Voice Description</label>
+                  <textarea
+                    id="custom-voice"
+                    value={customVoice}
+                    onChange={(e) => setCustomVoice(e.target.value.slice(0, 150))}
+                    placeholder="Describe your custom voice..."
+                    maxLength={150}
+                    disabled={isGenerating}
+                  />
+                  <span className="field-hint">{customVoice.length}/150 characters</span>
+                </div>
               </div>
             )}
 
-            <div className="config-group">
-              <label className="checkbox-inline">
+            {/* AI Toggle */}
+            <div className="config-section">
+              <label className="checkbox-row">
                 <input 
                   type="checkbox"
                   checked={useAiCommentary}
                   onChange={() => setUseAiCommentary(!useAiCommentary)}
                   disabled={isGenerating}
                 />
-                <span>AI Commentary</span>
+                <span className="checkbox-label">
+                  <strong>AI Commentary</strong>
+                  <small>Generate narrative analysis with Claude</small>
+                </span>
               </label>
             </div>
 
-            <div className="config-group">
-              <label>Include Sections</label>
-              <div className="section-grid">
-                {sections.map(section => (
-                  <label key={section.id} className="checkbox-chip">
-                    <input 
-                      type="checkbox"
-                      checked={section.enabled}
-                      onChange={() => toggleSection(section.id)}
-                      disabled={isGenerating}
-                    />
-                    <span>{section.title}</span>
-                  </label>
-                ))}
-              </div>
+            {/* Sections */}
+            <div className="config-section">
+              <button 
+                className="sections-toggle"
+                onClick={() => setShowSectionsExpanded(!showSectionsExpanded)}
+              >
+                <span>Sections</span>
+                <span className="sections-badge">{enabledSectionsCount}/{sections.length}</span>
+                <span className={`chevron ${showSectionsExpanded ? 'open' : ''}`}>▼</span>
+              </button>
+              {showSectionsExpanded && (
+                <div className="sections-list">
+                  {sections.map(section => (
+                    <label key={section.id} className="section-item">
+                      <input 
+                        type="checkbox"
+                        checked={section.enabled}
+                        onChange={() => toggleSection(section.id)}
+                        disabled={isGenerating}
+                      />
+                      <span>{section.title}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-          
-          <div className="config-footer-mobile">
-            <button className="btn-generate-mobile" onClick={generateReport} disabled={isGenerating}>
-              {isGenerating ? 'Generating...' : 'Generate Report'}
-            </button>
+
+            {/* Generate Button */}
+            <div className="config-section">
+              <button 
+                className="btn-generate"
+                onClick={generateReport}
+                disabled={isGenerating}
+              >
+                {isGenerating ? (
+                  <>
+                    <span className="spinner" />
+                    Generating...
+                  </>
+                ) : (
+                  'Generate Report'
+                )}
+              </button>
+            </div>
           </div>
         </aside>
 
         {/* Center: Preview */}
         <main className="preview-panel">
-          {progress.status === 'idle' && !reportUrl && (
-            <div className="empty-state">
-              <div className="empty-icon">📄</div>
-              <h3>Ready to Generate</h3>
-              <p>Configure settings and tap Generate</p>
-              <button className="btn-generate-cta" onClick={() => setShowConfig(true)}>
-                <span className="mobile-only">Configure Report</span>
-                <span className="desktop-only">Generate Report</span>
+          {/* Mobile header bar */}
+          <div className="preview-toolbar">
+            <button 
+              className="toolbar-btn config-toggle"
+              onClick={() => setShowConfig(true)}
+            >
+              ⚙️ Settings
+            </button>
+            <div className="toolbar-context">
+              {season} {reportType === 'weekly' ? `• Week ${week}` : '• Postseason'}
+            </div>
+            {hasReport && (
+              <button className="toolbar-btn" onClick={exportPdf}>
+                Export PDF
               </button>
-            </div>
-          )}
-
-          {progress.status === 'generating' && (
-            <div className="loading-state">
-              <div className="skeleton">
-                <div className="sk-header" />
-                <div className="sk-subheader" />
-                <div className="sk-row">
-                  <div className="sk-box" />
-                  <div className="sk-box" />
-                </div>
-                <div className="sk-line" />
-                <div className="sk-line short" />
-              </div>
-              <div className="progress-text">
-                <span className="spinner" />
-                {progress.currentSection}
-              </div>
-            </div>
-          )}
-
-          {progress.status === 'error' && (
-            <div className="error-state">
-              <InfoBanner variant="error">{error}</InfoBanner>
-              <Button onClick={generateReport}>Retry</Button>
-            </div>
-          )}
-
-          {hasReport && (
-            <iframe
-              ref={iframeRef}
-              src={reportUrl}
-              className="report-frame"
-              title="Report Preview"
-            />
-          )}
-        </main>
-
-        {/* Right: Navigate (desktop only) */}
-        <aside className="navigate-panel">
-          <div className="panel-section">
-            <h4>Navigate</h4>
-            {hasReport ? (
-              <div className="nav-links">
-                {sections.filter(s => s.enabled).map(s => (
-                  <button key={s.id} className="nav-link">{s.title}</button>
-                ))}
-              </div>
-            ) : (
-              <p className="nav-empty">Generate a report to navigate sections</p>
             )}
           </div>
 
-          {hasReport && (
-            <div className="panel-section">
-              <h4>Details</h4>
-              <div className="detail-grid">
-                <span>Template</span><span>{REPORT_TEMPLATES[template].name}</span>
-                <span>Voice</span><span>{VOICE_PRESETS[voice].name}</span>
-                <span>AI</span><span>{useAiCommentary ? 'Enabled' : 'Off'}</span>
+          {/* Preview Content */}
+          <div className="preview-content">
+            {progress.status === 'idle' && !reportUrl && (
+              <div className="empty-state">
+                <div className="empty-icon">📄</div>
+                <h3>Create Your Report</h3>
+                <p>Configure settings and click Generate to create your weekly report</p>
+                <button className="btn-generate-cta" onClick={() => setShowConfig(true)}>
+                  Configure & Generate
+                </button>
               </div>
+            )}
+
+            {progress.status === 'generating' && (
+              <div className="loading-state">
+                <div className="skeleton">
+                  <div className="sk-header" />
+                  <div className="sk-subheader" />
+                  <div className="sk-row">
+                    <div className="sk-box" />
+                    <div className="sk-box" />
+                  </div>
+                  <div className="sk-line" />
+                  <div className="sk-line short" />
+                  <div className="sk-line" />
+                </div>
+                <div className="progress-indicator">
+                  <span className="spinner" />
+                  <span>{progress.currentSection}</span>
+                </div>
+              </div>
+            )}
+
+            {progress.status === 'error' && (
+              <div className="error-state">
+                <InfoBanner variant="error">{error}</InfoBanner>
+                <Button onClick={generateReport}>Retry</Button>
+              </div>
+            )}
+
+            {hasReport && (
+              <div className="report-wrapper">
+                <div className="wysiwyg-hint">
+                  <span>✏️ Click any text to edit directly</span>
+                  {hasUnsavedChanges && <span className="unsaved-badge">Unsaved changes</span>}
+                </div>
+                <iframe
+                  ref={iframeRef}
+                  src={reportUrl}
+                  className="report-frame"
+                  title="Report Preview"
+                />
+              </div>
+            )}
+          </div>
+        </main>
+
+        {/* Right: Actions Panel */}
+        <aside className="actions-panel">
+          {!hasReport ? (
+            <div className="panel-empty">
+              <p>Generate a report to see actions</p>
             </div>
+          ) : (
+            <>
+              {/* Export Section */}
+              <div className="panel-section">
+                <h4>Export</h4>
+                <button className="action-btn primary" onClick={exportPdf}>
+                  📥 Download PDF
+                </button>
+                <button className="action-btn" onClick={downloadHtml}>
+                  💾 Save HTML
+                </button>
+                <button className="action-btn" onClick={copyHtml}>
+                  📋 Copy HTML
+                </button>
+              </div>
+
+              {/* Save Section */}
+              <div className="panel-section">
+                <h4>Draft</h4>
+                <button 
+                  className={`action-btn ${hasUnsavedChanges ? 'highlight' : ''}`}
+                  onClick={saveDraft}
+                  disabled={isSaving}
+                >
+                  {isSaving ? 'Saving...' : hasUnsavedChanges ? '💾 Save Changes' : '💾 Save Draft'}
+                </button>
+                {saveMessage && <span className="save-message">{saveMessage}</span>}
+              </div>
+
+              {/* Report Info */}
+              <div className="panel-section">
+                <h4>Report Info</h4>
+                <dl className="info-list">
+                  <dt>Template</dt>
+                  <dd>{REPORT_TEMPLATES[template].name}</dd>
+                  <dt>Voice</dt>
+                  <dd>{VOICE_PRESETS[voice].name}</dd>
+                  <dt>AI Commentary</dt>
+                  <dd>{useAiCommentary ? 'Enabled' : 'Disabled'}</dd>
+                  <dt>Generated</dt>
+                  <dd>{generatedAt?.toLocaleTimeString() || '—'}</dd>
+                </dl>
+              </div>
+            </>
           )}
         </aside>
       </div>
 
-      {/* Mobile overlay backdrop */}
+      {/* Mobile backdrop */}
       {showConfig && <div className="mobile-backdrop" onClick={() => setShowConfig(false)} />}
 
       <style jsx>{`
         .reports-page {
           display: flex;
           flex-direction: column;
-          height: calc(100vh - 120px);
+          height: calc(100vh - 60px);
           overflow: hidden;
         }
 
@@ -490,54 +644,254 @@ export default function ReportsPage() {
           height: 100%;
         }
 
-        /* Action Bar */
-        .action-bar {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 12px 20px;
+        /* Page Header */
+        .page-header {
+          padding: 16px 24px;
+          background: var(--accent-primary);
+          color: white;
+        }
+
+        .page-header h1 {
+          margin: 0;
+          font-size: 1.25rem;
+          font-weight: 600;
+        }
+
+        .header-meta {
+          margin: 4px 0 0;
+          font-size: 0.8125rem;
+          opacity: 0.85;
+        }
+
+        /* Main Layout */
+        .main-layout {
+          display: grid;
+          grid-template-columns: 260px 1fr 220px;
+          flex: 1;
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        /* Config Panel */
+        .config-panel {
           background: var(--surface);
-          border-bottom: 1px solid var(--border-light);
+          border-right: 1px solid var(--border-light);
+          overflow-y: auto;
         }
 
-        .context {
+        .config-panel.disabled {
+          opacity: 0.5;
+          pointer-events: none;
+        }
+
+        .config-mobile-header {
+          display: none;
+        }
+
+        .config-content {
+          padding: 16px;
+        }
+
+        .config-section {
+          margin-bottom: 20px;
+        }
+
+        .config-section:last-child {
+          margin-bottom: 0;
+        }
+
+        /* Toggle Group */
+        .toggle-group {
           display: flex;
-          gap: 8px;
+          background: var(--surface-sunken);
+          border-radius: 6px;
+          padding: 3px;
         }
 
-        .context-label {
+        .toggle-btn {
+          flex: 1;
+          padding: 10px 12px;
           font-size: 0.875rem;
+          font-weight: 500;
+          background: none;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+
+        .toggle-btn.active {
+          background: white;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+          color: var(--accent-primary);
+        }
+
+        /* Fields */
+        .field-row {
+          display: flex;
+          gap: 12px;
+        }
+
+        .field {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .field label {
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: var(--text-muted);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .field select,
+        .field textarea {
+          width: 100%;
+          padding: 10px 12px;
+          font-size: 0.9375rem;
+          border: 1px solid var(--border-light);
+          border-radius: 6px;
+          background: white;
+        }
+
+        .field select:focus,
+        .field textarea:focus {
+          outline: none;
+          border-color: var(--accent-primary);
+          box-shadow: 0 0 0 3px rgba(45, 80, 22, 0.1);
+        }
+
+        .field textarea {
+          min-height: 80px;
+          resize: vertical;
+        }
+
+        .field-hint {
+          font-size: 0.75rem;
+          color: var(--text-muted);
+          line-height: 1.4;
+        }
+
+        /* Checkbox Row */
+        .checkbox-row {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          cursor: pointer;
+          padding: 12px;
+          background: var(--surface-sunken);
+          border-radius: 8px;
+          transition: background 0.15s;
+        }
+
+        .checkbox-row:hover {
+          background: var(--border-light);
+        }
+
+        .checkbox-row input {
+          width: 18px;
+          height: 18px;
+          margin-top: 2px;
+          accent-color: var(--accent-primary);
+        }
+
+        .checkbox-label {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .checkbox-label strong {
+          font-size: 0.9375rem;
+        }
+
+        .checkbox-label small {
+          font-size: 0.75rem;
           color: var(--text-muted);
         }
 
-        .actions {
+        /* Sections Toggle */
+        .sections-toggle {
           display: flex;
-          gap: 8px;
           align-items: center;
-        }
-
-        .btn-config-toggle {
-          display: none;
-          width: 40px;
-          height: 40px;
-          font-size: 1.25rem;
+          width: 100%;
+          padding: 10px 12px;
+          font-size: 0.875rem;
+          font-weight: 500;
           background: var(--surface-sunken);
           border: 1px solid var(--border-light);
           border-radius: 6px;
           cursor: pointer;
+          transition: background 0.15s;
         }
 
+        .sections-toggle:hover {
+          background: var(--border-light);
+        }
+
+        .sections-badge {
+          margin-left: auto;
+          padding: 2px 8px;
+          font-size: 0.75rem;
+          background: var(--accent-primary);
+          color: white;
+          border-radius: 10px;
+        }
+
+        .chevron {
+          margin-left: 8px;
+          font-size: 0.625rem;
+          transition: transform 0.2s;
+        }
+
+        .chevron.open {
+          transform: rotate(180deg);
+        }
+
+        .sections-list {
+          margin-top: 8px;
+          padding: 8px;
+          background: white;
+          border: 1px solid var(--border-light);
+          border-radius: 6px;
+        }
+
+        .section-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px;
+          font-size: 0.875rem;
+          cursor: pointer;
+          border-radius: 4px;
+          transition: background 0.15s;
+        }
+
+        .section-item:hover {
+          background: var(--surface-sunken);
+        }
+
+        .section-item input {
+          accent-color: var(--accent-primary);
+        }
+
+        /* Generate Button */
         .btn-generate {
           display: flex;
           align-items: center;
+          justify-content: center;
           gap: 8px;
-          padding: 10px 20px;
-          font-size: 0.875rem;
+          width: 100%;
+          padding: 14px;
+          font-size: 1rem;
           font-weight: 600;
           background: var(--accent-primary);
           color: white;
           border: none;
-          border-radius: 6px;
+          border-radius: 8px;
           cursor: pointer;
           transition: background 0.15s;
         }
@@ -547,13 +901,13 @@ export default function ReportsPage() {
         }
 
         .btn-generate:disabled {
-          opacity: 0.6;
+          opacity: 0.7;
           cursor: not-allowed;
         }
 
         .spinner {
-          width: 14px;
-          height: 14px;
+          width: 16px;
+          height: 16px;
           border: 2px solid rgba(255,255,255,0.3);
           border-top-color: white;
           border-radius: 50%;
@@ -564,206 +918,25 @@ export default function ReportsPage() {
           to { transform: rotate(360deg); }
         }
 
-        .export-dropdown {
-          position: relative;
-        }
-
-        .btn-export {
-          padding: 10px 16px;
-          font-size: 0.875rem;
-          font-weight: 500;
-          background: white;
-          border: 1px solid var(--border-light);
-          border-radius: 6px;
-          cursor: pointer;
-        }
-
-        .dropdown-menu {
-          position: absolute;
-          top: 100%;
-          right: 0;
-          margin-top: 4px;
-          background: white;
-          border: 1px solid var(--border-light);
-          border-radius: 6px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-          z-index: 100;
-          min-width: 140px;
-        }
-
-        .dropdown-menu button {
-          display: block;
-          width: 100%;
-          padding: 12px 14px;
-          font-size: 0.875rem;
-          text-align: left;
-          background: none;
-          border: none;
-          cursor: pointer;
-        }
-
-        .dropdown-menu button:hover {
-          background: var(--surface-sunken);
-        }
-
-        /* Main Layout */
-        .main-layout {
-          display: grid;
-          grid-template-columns: 220px 1fr 180px;
-          flex: 1;
-          min-height: 0;
-          overflow: hidden;
-        }
-
-        /* Config Panel */
-        .config-panel {
-          padding: 16px;
-          background: var(--surface);
-          border-right: 1px solid var(--border-light);
-          overflow-y: auto;
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-        }
-
-        .config-panel.disabled {
-          opacity: 0.5;
-          pointer-events: none;
-        }
-
-        .config-header-mobile,
-        .config-footer-mobile {
-          display: none;
-        }
-
-        .config-scroll {
-          display: contents;
-        }
-
-        .config-row-inline {
-          display: flex;
-          gap: 12px;
-        }
-
-        .config-group {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-
-        .config-group.flex-1 {
-          flex: 1;
-        }
-
-        .config-group > label {
-          font-size: 0.75rem;
-          font-weight: 600;
-          color: var(--text-muted);
-        }
-
-        .config-group select,
-        .config-group textarea {
-          width: 100%;
-          padding: 8px 10px;
-          font-size: 0.875rem;
-          border: 1px solid var(--border-light);
-          border-radius: 4px;
-          background: white;
-        }
-
-        .config-group textarea {
-          min-height: 60px;
-          resize: none;
-        }
-
-        .radio-group {
-          display: flex;
-          gap: 0;
-        }
-
-        .radio-option {
-          flex: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 8px;
-          font-size: 0.8125rem;
-          font-weight: 500;
-          border: 1px solid var(--border-light);
-          background: white;
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-
-        .radio-option:first-child {
-          border-radius: 4px 0 0 4px;
-        }
-
-        .radio-option:last-child {
-          border-radius: 0 4px 4px 0;
-          border-left: none;
-        }
-
-        .radio-option.selected {
-          background: var(--accent-primary);
-          border-color: var(--accent-primary);
-          color: white;
-        }
-
-        .radio-option input {
-          display: none;
-        }
-
-        .checkbox-inline {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          font-size: 0.8125rem;
-          cursor: pointer;
-        }
-
-        .checkbox-inline input {
-          accent-color: var(--accent-primary);
-          width: 16px;
-          height: 16px;
-        }
-
-        .section-grid {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 6px;
-        }
-
-        .checkbox-chip {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          padding: 6px 10px;
-          font-size: 0.75rem;
-          background: white;
-          border: 1px solid var(--border-light);
-          border-radius: 4px;
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-
-        .checkbox-chip:has(input:checked) {
-          background: rgba(45, 80, 22, 0.1);
-          border-color: var(--accent-primary);
-        }
-
-        .checkbox-chip input {
-          display: none;
-        }
-
         /* Preview Panel */
         .preview-panel {
+          display: flex;
+          flex-direction: column;
           background: var(--surface-sunken);
+          overflow: hidden;
+        }
+
+        .preview-toolbar {
+          display: none;
+        }
+
+        .preview-content {
+          flex: 1;
           display: flex;
           align-items: center;
           justify-content: center;
+          padding: 20px;
           overflow: hidden;
-          padding: 16px;
         }
 
         .empty-state,
@@ -774,35 +947,36 @@ export default function ReportsPage() {
           align-items: center;
           gap: 12px;
           text-align: center;
-          padding: 20px;
+          padding: 24px;
         }
 
         .empty-icon {
-          font-size: 3rem;
-          opacity: 0.5;
+          font-size: 4rem;
+          opacity: 0.4;
         }
 
         .empty-state h3 {
           margin: 0;
-          font-size: 1.125rem;
+          font-size: 1.25rem;
           color: var(--foreground);
         }
 
         .empty-state p {
           margin: 0;
-          font-size: 0.875rem;
+          font-size: 0.9375rem;
           color: var(--text-muted);
+          max-width: 280px;
         }
 
         .btn-generate-cta {
-          margin-top: 8px;
-          padding: 12px 24px;
-          font-size: 0.875rem;
+          margin-top: 12px;
+          padding: 14px 28px;
+          font-size: 1rem;
           font-weight: 600;
           background: var(--accent-primary);
           color: white;
           border: none;
-          border-radius: 6px;
+          border-radius: 8px;
           cursor: pointer;
         }
 
@@ -810,59 +984,59 @@ export default function ReportsPage() {
           background: var(--accent-secondary);
         }
 
-        .mobile-only {
-          display: none;
-        }
-
+        /* Skeleton Loading */
         .skeleton {
-          width: 280px;
+          width: 360px;
           max-width: 100%;
-          padding: 20px;
+          padding: 24px;
           background: var(--surface);
           border: 1px solid var(--border-light);
-          border-radius: 8px;
+          border-radius: 12px;
         }
 
         .sk-header {
           width: 50%;
-          height: 20px;
+          height: 24px;
           background: var(--border-light);
           margin-bottom: 8px;
+          border-radius: 4px;
           animation: pulse 1.5s infinite;
         }
 
         .sk-subheader {
-          width: 70%;
-          height: 14px;
+          width: 35%;
+          height: 16px;
           background: var(--border-light);
-          margin-bottom: 16px;
+          margin-bottom: 24px;
+          border-radius: 4px;
           animation: pulse 1.5s infinite;
         }
 
         .sk-row {
           display: flex;
-          gap: 12px;
-          margin-bottom: 12px;
+          gap: 16px;
+          margin-bottom: 16px;
         }
 
         .sk-box {
           flex: 1;
-          height: 60px;
+          height: 70px;
           background: var(--border-light);
-          border-radius: 4px;
+          border-radius: 6px;
           animation: pulse 1.5s infinite;
         }
 
         .sk-line {
           width: 100%;
-          height: 12px;
+          height: 14px;
           background: var(--border-light);
-          margin-bottom: 8px;
+          margin-bottom: 10px;
+          border-radius: 4px;
           animation: pulse 1.5s infinite;
         }
 
         .sk-line.short {
-          width: 60%;
+          width: 70%;
         }
 
         @keyframes pulse {
@@ -870,88 +1044,161 @@ export default function ReportsPage() {
           50% { opacity: 0.7; }
         }
 
-        .progress-text {
+        .progress-indicator {
           display: flex;
           align-items: center;
-          gap: 8px;
-          font-size: 0.875rem;
+          gap: 10px;
+          margin-top: 20px;
+          font-size: 0.9375rem;
           color: var(--accent-primary);
+          font-weight: 500;
         }
 
-        .progress-text .spinner {
+        .progress-indicator .spinner {
           border-color: var(--border-light);
           border-top-color: var(--accent-primary);
         }
 
-        .report-frame {
+        /* Report Wrapper with WYSIWYG hint */
+        .report-wrapper {
+          display: flex;
+          flex-direction: column;
           width: 100%;
           height: 100%;
+        }
+
+        .wysiwyg-hint {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 8px 12px;
+          font-size: 0.8125rem;
+          color: var(--text-muted);
+          background: var(--surface);
           border: 1px solid var(--border-light);
-          background: white;
+          border-bottom: none;
+          border-radius: 8px 8px 0 0;
+        }
+
+        .unsaved-badge {
+          padding: 2px 8px;
+          font-size: 0.75rem;
+          background: #fef3c7;
+          color: #92400e;
           border-radius: 4px;
         }
 
-        /* Navigate Panel */
-        .navigate-panel {
-          padding: 16px;
+        .report-frame {
+          flex: 1;
+          width: 100%;
+          border: 1px solid var(--border-light);
+          border-radius: 0 0 8px 8px;
+          background: white;
+        }
+
+        /* Actions Panel */
+        .actions-panel {
           background: var(--surface);
           border-left: 1px solid var(--border-light);
+          padding: 20px;
           overflow-y: auto;
         }
 
+        .panel-empty {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          color: var(--text-muted);
+          font-style: italic;
+          text-align: center;
+        }
+
         .panel-section {
-          margin-bottom: 20px;
+          margin-bottom: 24px;
+        }
+
+        .panel-section:last-child {
+          margin-bottom: 0;
         }
 
         .panel-section h4 {
+          margin: 0 0 12px;
           font-size: 0.6875rem;
           font-weight: 700;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 1px;
           color: var(--text-muted);
-          margin: 0 0 10px;
         }
 
-        .nav-links {
+        .action-btn {
           display: flex;
-          flex-direction: column;
-          gap: 4px;
-        }
-
-        .nav-link {
-          padding: 8px 10px;
-          font-size: 0.8125rem;
-          text-align: left;
-          background: none;
-          border: none;
-          border-radius: 4px;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          padding: 10px 12px;
+          margin-bottom: 8px;
+          font-size: 0.875rem;
+          font-weight: 500;
+          background: white;
+          border: 1px solid var(--border-light);
+          border-radius: 6px;
           cursor: pointer;
-          transition: background 0.15s;
+          transition: all 0.15s;
         }
 
-        .nav-link:hover {
+        .action-btn:last-child {
+          margin-bottom: 0;
+        }
+
+        .action-btn:hover {
           background: var(--surface-sunken);
+          border-color: var(--border-dark);
         }
 
-        .nav-empty {
+        .action-btn.primary {
+          background: var(--accent-primary);
+          color: white;
+          border-color: var(--accent-primary);
+        }
+
+        .action-btn.primary:hover {
+          background: var(--accent-secondary);
+        }
+
+        .action-btn.highlight {
+          background: #fef3c7;
+          border-color: #f59e0b;
+          color: #92400e;
+        }
+
+        .action-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .save-message {
+          display: block;
+          margin-top: 8px;
           font-size: 0.75rem;
-          color: var(--text-muted);
-          font-style: italic;
-          margin: 0;
+          color: var(--accent-primary);
+          text-align: center;
         }
 
-        .detail-grid {
+        .info-list {
           display: grid;
           grid-template-columns: auto 1fr;
-          gap: 4px 10px;
-          font-size: 0.75rem;
+          gap: 6px 12px;
+          margin: 0;
+          font-size: 0.8125rem;
         }
 
-        .detail-grid span:nth-child(odd) {
+        .info-list dt {
           color: var(--text-muted);
         }
 
-        .detail-grid span:nth-child(even) {
+        .info-list dd {
+          margin: 0;
           font-weight: 500;
         }
 
@@ -960,114 +1207,103 @@ export default function ReportsPage() {
         }
 
         /* ═══════════════════════════════════════════════════════════════
-           TABLET BREAKPOINT (900px)
+           TABLET BREAKPOINT (1024px)
            ═══════════════════════════════════════════════════════════════ */
-        @media (max-width: 900px) {
+        @media (max-width: 1024px) {
           .main-layout {
-            grid-template-columns: 200px 1fr;
+            grid-template-columns: 240px 1fr;
           }
 
-          .navigate-panel {
+          .actions-panel {
             display: none;
           }
 
-          .preview-panel {
-            min-height: 300px;
+          .preview-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 16px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border-light);
+          }
+
+          .toolbar-btn {
+            padding: 8px 14px;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            background: white;
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            cursor: pointer;
+          }
+
+          .toolbar-btn.config-toggle {
+            display: none;
+          }
+
+          .toolbar-context {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+          }
+
+          .preview-content {
+            padding: 16px;
           }
         }
 
         /* ═══════════════════════════════════════════════════════════════
-           MOBILE BREAKPOINT (640px)
+           MOBILE BREAKPOINT (768px)
            ═══════════════════════════════════════════════════════════════ */
-        @media (max-width: 640px) {
+        @media (max-width: 768px) {
           .reports-page {
-            height: calc(100vh - 60px);
+            height: calc(100vh - 56px);
           }
 
-          /* Action Bar Mobile */
-          .action-bar {
-            padding: 10px 12px;
+          .page-header {
+            padding: 12px 16px;
           }
 
-          .context-label {
-            font-size: 0.8125rem;
+          .page-header h1 {
+            font-size: 1.125rem;
           }
 
-          .btn-config-toggle {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-          }
-
-          .btn-generate {
-            padding: 10px 14px;
-          }
-
-          .btn-text {
-            display: none;
-          }
-
-          .btn-generate::after {
-            content: '▶';
-            font-size: 0.75rem;
-          }
-
-          .btn-generate:disabled::after {
-            content: '';
-          }
-
-          .btn-export {
-            padding: 10px 12px;
-            font-size: 0.8125rem;
-          }
-
-          .dropdown-menu {
-            right: -12px;
-          }
-
-          /* Main Layout Mobile */
           .main-layout {
             grid-template-columns: 1fr;
-            grid-template-rows: 1fr;
           }
 
-          /* Config Panel - Slide-up Sheet */
+          /* Config Panel - Slide-up sheet */
           .config-panel {
             position: fixed;
             bottom: 0;
             left: 0;
             right: 0;
-            top: auto;
-            height: auto;
             max-height: 85vh;
             border-right: none;
             border-top: 1px solid var(--border-light);
             border-radius: 16px 16px 0 0;
-            box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+            box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
             transform: translateY(100%);
             transition: transform 0.3s ease;
             z-index: 200;
-            gap: 12px;
-            padding: 0;
           }
 
           .config-panel.mobile-open {
             transform: translateY(0);
           }
 
-          .config-header-mobile {
+          .config-mobile-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 16px;
-            border-bottom: 1px solid var(--border-light);
+            padding: 16px 20px;
+            font-size: 1.125rem;
             font-weight: 600;
-            font-size: 1rem;
+            border-bottom: 1px solid var(--border-light);
           }
 
           .close-btn {
-            width: 32px;
-            height: 32px;
+            width: 36px;
+            height: 36px;
             font-size: 1.25rem;
             background: none;
             border: none;
@@ -1075,39 +1311,16 @@ export default function ReportsPage() {
             cursor: pointer;
           }
 
-          .config-scroll {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            padding: 16px;
+          .config-content {
+            padding: 20px;
+            max-height: calc(85vh - 70px);
             overflow-y: auto;
-            max-height: calc(85vh - 140px);
           }
 
-          .config-footer-mobile {
-            display: block;
-            padding: 12px 16px;
-            border-top: 1px solid var(--border-light);
-            background: var(--surface);
+          .preview-toolbar .config-toggle {
+            display: flex;
           }
 
-          .btn-generate-mobile {
-            width: 100%;
-            padding: 14px;
-            font-size: 1rem;
-            font-weight: 600;
-            background: var(--accent-primary);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-          }
-
-          .btn-generate-mobile:disabled {
-            opacity: 0.6;
-          }
-
-          /* Mobile Backdrop */
           .mobile-backdrop {
             display: block;
             position: fixed;
@@ -1116,100 +1329,34 @@ export default function ReportsPage() {
             z-index: 150;
           }
 
-          /* Preview Panel Mobile */
-          .preview-panel {
+          .preview-content {
             padding: 12px;
           }
 
-          .empty-state h3 {
-            font-size: 1rem;
-          }
-
-          .empty-state p {
-            font-size: 0.8125rem;
-          }
-
-          .empty-icon {
-            font-size: 2.5rem;
-          }
-
-          .mobile-only {
-            display: inline;
-          }
-
-          .desktop-only {
-            display: none;
-          }
-
-          .btn-generate-cta {
-            padding: 14px 24px;
-          }
-
-          .skeleton {
-            width: 100%;
-            padding: 16px;
-          }
-
-          /* Sections as chips on mobile */
-          .section-grid {
-            gap: 8px;
-          }
-
-          .checkbox-chip {
-            padding: 8px 12px;
-            font-size: 0.8125rem;
-          }
-
-          /* Inline rows stack on mobile */
-          .config-row-inline {
-            flex-direction: column;
-            gap: 12px;
-          }
-
-          .config-group select {
-            padding: 12px;
-            font-size: 1rem;
-          }
-
-          .radio-option {
-            padding: 12px;
-            font-size: 0.875rem;
-          }
-
-          .checkbox-inline {
-            font-size: 0.875rem;
-            padding: 8px 0;
-          }
-
-          .checkbox-inline input {
-            width: 20px;
-            height: 20px;
+          .wysiwyg-hint {
+            font-size: 0.75rem;
+            padding: 6px 10px;
           }
         }
 
         /* ═══════════════════════════════════════════════════════════════
-           SMALL MOBILE (380px)
+           SMALL MOBILE (480px)
            ═══════════════════════════════════════════════════════════════ */
-        @media (max-width: 380px) {
-          .action-bar {
-            padding: 8px 10px;
+        @media (max-width: 480px) {
+          .field-row {
+            flex-direction: column;
           }
 
-          .context-label {
-            font-size: 0.75rem;
+          .skeleton {
+            width: 100%;
           }
 
-          .actions {
-            gap: 6px;
+          .empty-state h3 {
+            font-size: 1.125rem;
           }
 
-          .btn-generate {
-            padding: 8px 12px;
-          }
-
-          .btn-config-toggle {
-            width: 36px;
-            height: 36px;
+          .empty-icon {
+            font-size: 3rem;
           }
         }
       `}</style>

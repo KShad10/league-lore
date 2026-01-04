@@ -5,11 +5,22 @@ import { cobChroniclesTheme } from './theme';
 
 const { colors, fonts, fontSize } = cobChroniclesTheme;
 
+// Markdown to HTML converter for AI commentary
+function renderMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/##\s+(.+?)$/gm, '<strong>$1</strong>')
+    .replace(/—/g, '&mdash;')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, ' ');
+}
+
 // CSS Stylesheet for reports
 export const reportStylesheet = `
   @page {
     size: letter;
-    margin: 0.5in;
+    margin: 0.75in 0.75in 1in 0.75in;
   }
   
   @media print {
@@ -28,6 +39,7 @@ export const reportStylesheet = `
     
     body {
       padding: 0 !important;
+      font-size: 11pt;
     }
     
     .report-container {
@@ -39,29 +51,88 @@ export const reportStylesheet = `
     /* Page break utilities */
     .page-break-before {
       page-break-before: always;
+      break-before: page;
     }
     
     .page-break-after {
       page-break-after: always;
+      break-after: page;
     }
     
     .page-break {
       page-break-before: always;
+      break-before: page;
     }
     
     .no-break,
     .avoid-break {
       page-break-inside: avoid;
+      break-inside: avoid;
     }
     
     /* Keep headers with content */
     h1, h2, h3, h4, h5, h6 {
       page-break-after: avoid;
+      break-after: avoid;
     }
     
-    /* Keep elements together */
-    table, .matchup-card, .stat-box, .award-card {
+    /* Keep section header with following content */
+    .section-header {
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+    
+    .section-header + * {
+      page-break-before: avoid;
+      break-before: avoid;
+    }
+    
+    /* Keep elements together - CRITICAL */
+    .matchup-card {
       page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    
+    .award-card {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    
+    .stat-box {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    
+    .stat-grid {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    
+    table {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    
+    /* Keep table header with first rows */
+    thead {
+      display: table-header-group;
+    }
+    
+    tr {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    
+    /* Force page breaks before major sections */
+    .section-break-before {
+      page-break-before: always;
+      break-before: page;
+    }
+    
+    /* Callouts and highlight boxes */
+    .callout, .highlight-box {
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
     
     /* Hide screen-only elements */
@@ -69,13 +140,22 @@ export const reportStylesheet = `
       display: none !important;
     }
     
-    /* Optimize for print */
-    .section-header {
-      page-break-after: avoid;
+    /* Matchup grid - allow wrapping but keep cards together */
+    .matchup-grid {
+      page-break-inside: auto;
+      break-inside: auto;
     }
     
-    .matchup-grid {
-      page-break-inside: avoid;
+    /* Footer on each page */
+    .report-footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 9pt;
+      color: #666;
+      padding: 0.25in 0;
     }
   }
   
@@ -96,6 +176,21 @@ export const reportStylesheet = `
     max-width: 850px;
     margin: 0 auto;
     background-color: ${colors.parchment};
+  }
+  
+  /* Editable content styles */
+  [contenteditable="true"] {
+    outline: none;
+    border-radius: 4px;
+    transition: box-shadow 0.2s ease;
+  }
+  
+  [contenteditable="true"]:hover {
+    box-shadow: 0 0 0 2px rgba(45, 80, 22, 0.2);
+  }
+  
+  [contenteditable="true"]:focus {
+    box-shadow: 0 0 0 2px ${colors.headerGreen};
   }
   
   /* Typography */
@@ -141,6 +236,13 @@ export const reportStylesheet = `
   
   p {
     margin-bottom: 1rem;
+  }
+  
+  /* Editable paragraph */
+  p.editable-content {
+    min-height: 1.5em;
+    padding: 0.25rem;
+    margin: -0.25rem;
   }
   
   /* Stat boxes */
@@ -303,13 +405,13 @@ export const reportStylesheet = `
   }
   
   .matchup-commentary {
-    font-size: ${fontSize.small};
+    font-size: 0.85rem;
     color: ${colors.textPrimary};
     font-style: italic;
     margin-top: 0.75rem;
     padding-top: 0.75rem;
     border-top: 1px dashed ${colors.borderLight};
-    line-height: 1.5;
+    line-height: 1.4;
   }
   
   /* Badges */
@@ -435,9 +537,23 @@ export const reportStylesheet = `
 export function generateHtmlDocument(
   title: string,
   content: string,
-  options: { includeFooter?: boolean; footerText?: string } = {}
+  options: { includeFooter?: boolean; footerText?: string; editable?: boolean } = {}
 ): string {
-  const { includeFooter = true, footerText = 'The Cob Chronicles — OG Papio Dynasty League' } = options;
+  const { includeFooter = true, footerText = 'The Cob Chronicles — OG Papio Dynasty League', editable = false } = options;
+  
+  const editableScript = editable ? `
+    <script>
+      // Track changes for WYSIWYG editing
+      document.addEventListener('input', function(e) {
+        if (e.target.hasAttribute('contenteditable')) {
+          window.parent?.postMessage({
+            type: 'contentChange',
+            html: document.querySelector('.report-container').innerHTML
+          }, '*');
+        }
+      });
+    </script>
+  ` : '';
   
   return `<!DOCTYPE html>
 <html lang="en">
@@ -452,6 +568,7 @@ export function generateHtmlDocument(
     ${content}
     ${includeFooter ? `<div class="report-footer">${footerText}</div>` : ''}
   </div>
+  ${editableScript}
 </body>
 </html>`;
 }
@@ -470,40 +587,50 @@ export interface MatchupCardData {
 }
 
 export const html: {
-  title: (text: string) => string;
-  subtitle: (text: string) => string;
-  section: (title: string, content: string) => string;
+  title: (text: string, editable?: boolean) => string;
+  subtitle: (text: string, editable?: boolean) => string;
+  section: (title: string, content: string, options?: { sectionId?: string; breakBefore?: boolean }) => string;
   subsection: (title: string, content: string) => string;
-  paragraph: (text: string) => string;
+  paragraph: (text: string, editable?: boolean) => string;
   statGrid: (stats: Array<{ label: string; value: string | number; detail?: string; color?: string }>) => string;
   table: (headers: string[], rows: string[][], options?: { highlightRows?: number[] }) => string;
-  matchupCard: (matchup: MatchupCardData) => string;
-  matchupGrid: (matchups: MatchupCardData[]) => string;
-  callout: (text: string) => string;
-  highlightBox: (text: string) => string;
+  matchupCard: (matchup: MatchupCardData, editable?: boolean) => string;
+  matchupGrid: (matchups: MatchupCardData[], editable?: boolean) => string;
+  callout: (text: string, editable?: boolean) => string;
+  highlightBox: (text: string, editable?: boolean) => string;
   badge: (text: string, type?: 'gold' | 'silver' | 'bronze' | 'toilet' | 'green' | 'rust') => string;
   awardCard: (award: { icon: string; title: string; winner: string; stat: string }) => string;
   pageBreak: () => string;
   noBreak: (content: string) => string;
 } = {
-  title: (text: string) => `<h1 class="report-title">${text}</h1>`,
+  title: (text: string, editable = false) => 
+    `<h1 class="report-title"${editable ? ' contenteditable="true"' : ''}>${text}</h1>`,
   
-  subtitle: (text: string) => `<div class="report-subtitle">${text}</div>`,
+  subtitle: (text: string, editable = false) => 
+    `<div class="report-subtitle"${editable ? ' contenteditable="true"' : ''}>${text}</div>`,
   
-  section: (title: string, content: string) => `
-    <h2 class="section-header">${title}</h2>
-    ${content}
-  `,
+  section: (title: string, content: string, options: { sectionId?: string; breakBefore?: boolean } = {}) => {
+    const { sectionId, breakBefore } = options;
+    const classes = ['section-header'];
+    if (breakBefore) classes.push('section-break-before');
+    return `
+    <h2 class="${classes.join(' ')}"${sectionId ? ` data-section="${sectionId}"` : ''}>${title}</h2>
+    <div class="avoid-break">
+      ${content}
+    </div>
+  `;
+  },
   
   subsection: (title: string, content: string) => `
     <h3 class="subsection-header">${title}</h3>
     ${content}
   `,
   
-  paragraph: (text: string) => `<p>${text}</p>`,
+  paragraph: (text: string, editable = false) => 
+    `<p class="${editable ? 'editable-content' : ''}"${editable ? ' contenteditable="true"' : ''}>${renderMarkdown(text)}</p>`,
   
   statGrid: (stats: Array<{ label: string; value: string | number; detail?: string; color?: string }>) => `
-    <div class="stat-grid">
+    <div class="stat-grid avoid-break">
       ${stats.map(s => `
         <div class="stat-box">
           <div class="stat-label">${s.label}</div>
@@ -517,22 +644,24 @@ export const html: {
   table: (headers: string[], rows: string[][], options: { highlightRows?: number[] } = {}) => {
     const { highlightRows = [] } = options;
     return `
-      <table>
-        <thead>
-          <tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>
-        </thead>
-        <tbody>
-          ${rows.map((row, i) => `
-            <tr class="${highlightRows.includes(i) ? 'highlight' : ''}">
-              ${row.map(cell => `<td>${cell}</td>`).join('')}
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
+      <div class="avoid-break">
+        <table>
+          <thead>
+            <tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>
+          </thead>
+          <tbody>
+            ${rows.map((row, i) => `
+              <tr class="${highlightRows.includes(i) ? 'highlight' : ''}">
+                ${row.map(cell => `<td>${cell}</td>`).join('')}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
     `;
   },
   
-  matchupCard: (matchup: MatchupCardData) => `
+  matchupCard: (matchup: MatchupCardData, editable = false) => `
     <div class="matchup-card ${matchup.cardClass || ''}">
       <div class="matchup-header">
         <span>${matchup.type || 'Matchup'}</span>
@@ -557,19 +686,21 @@ export const html: {
         </div>
       </div>
       <div class="matchup-margin">Margin: ${matchup.margin.toFixed(2)}</div>
-      ${matchup.commentary ? `<div class="matchup-commentary">${matchup.commentary}</div>` : ''}
+      ${matchup.commentary ? `<div class="matchup-commentary"${editable ? ' contenteditable="true"' : ''}>${renderMarkdown(matchup.commentary)}</div>` : ''}
     </div>
   `,
   
-  matchupGrid: (matchups: MatchupCardData[]) => `
+  matchupGrid: (matchups: MatchupCardData[], editable = false) => `
     <div class="matchup-grid">
-      ${matchups.map(m => html.matchupCard(m)).join('')}
+      ${matchups.map(m => html.matchupCard(m, editable)).join('')}
     </div>
   `,
   
-  callout: (text: string) => `<div class="callout">${text}</div>`,
+  callout: (text: string, editable = false) => 
+    `<div class="callout avoid-break"${editable ? ' contenteditable="true"' : ''}>${renderMarkdown(text)}</div>`,
   
-  highlightBox: (text: string) => `<div class="highlight-box">${text}</div>`,
+  highlightBox: (text: string, editable = false) => 
+    `<div class="highlight-box avoid-break"${editable ? ' contenteditable="true"' : ''}>${renderMarkdown(text)}</div>`,
   
   badge: (text: string, type: 'gold' | 'silver' | 'bronze' | 'toilet' | 'green' | 'rust' = 'green') => 
     `<span class="badge badge-${type}">${text}</span>`,
@@ -587,7 +718,10 @@ export const html: {
   
   pageBreak: () => `<div class="page-break"></div>`,
   
-  noBreak: (content: string) => `<div class="no-break">${content}</div>`,
+  noBreak: (content: string) => `<div class="avoid-break">${content}</div>`,
 };
 
-export default { generateHtmlDocument, html, reportStylesheet };
+// Export markdown renderer for external use
+export { renderMarkdown };
+
+export default { generateHtmlDocument, html, reportStylesheet, renderMarkdown };
