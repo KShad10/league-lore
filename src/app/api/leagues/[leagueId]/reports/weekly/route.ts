@@ -103,7 +103,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }>();
     
     for (const row of standingsData) {
-      const manager = row.managers as { id: string; current_username: string; display_name: string } | null;
+      const manager = row.managers as unknown as { id: string; current_username: string; display_name: string } | null;
       if (!manager) continue;
       
       const existing = managerStats.get(row.manager_id) || {

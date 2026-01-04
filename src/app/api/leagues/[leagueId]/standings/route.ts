@@ -107,7 +107,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     
     for (const row of filteredData) {
       const key = `${row.manager_id}-${row.season}`;
-      const manager = row.managers as { current_username: string; display_name: string } | null;
+      const manager = row.managers as unknown as { current_username: string; display_name: string } | null;
       const existing = standingsMap.get(key);
       
       if (existing) {
