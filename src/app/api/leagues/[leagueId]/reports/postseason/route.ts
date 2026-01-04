@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generatePostseasonReport, PostseasonReportData } from '@/lib/reports'
+import { 
+  generatePostseasonReport, 
+  PostseasonReportData, 
+  PostseasonMatchup,
+  BracketRound 
+} from '@/lib/reports'
 
 interface RouteParams {
   params: Promise<{ leagueId: string }>
@@ -115,15 +120,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .eq('is_playoff', true)
       .order('week', { ascending: true })
     
-    // Process matchups into bracket structure
-    const playoffBracket: Record<string, unknown> = {}
-    const placeGames: Record<string, unknown> = {}
-    const toiletBowl: Record<string, unknown> = {}
+    // Process matchups into bracket structure with proper types
+    const playoffBracket: Record<string, BracketRound> = {}
+    const placeGames: Record<string, BracketRound> = {}
+    const toiletBowl: Record<string, BracketRound> = {}
     
-    let champion = null, championSeed = 0
-    let runnerUp = null, runnerUpSeed = 0
-    let thirdPlace = null, thirdPlaceSeed = 0
-    let toiletBowlLoser = null, toiletBowlLoserSeed = 0
+    let champion: string | null = null, championSeed = 0
+    let runnerUp: string | null = null, runnerUpSeed = 0
+    const thirdPlace: string | null = null, thirdPlaceSeed = 0
+    let toiletBowlLoser: string | null = null, toiletBowlLoserSeed = 0
     
     for (const m of (matchups || [])) {
       const team1 = m.team1 as unknown as { display_name?: string; current_username?: string } | null
@@ -137,32 +142,48 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       const roundNumber = m.week - playoffWeekStart + 1
       const isLowerBracket = seed1 > playoffTeams && seed2 > playoffTeams
       
-      // Determine matchup type
+      // Determine matchup type and bracket type
       let matchupType = 'Playoff'
+      let bracketType: 'playoff' | 'toilet_bowl' | 'place_game' = 'playoff'
+      
       if (isLowerBracket) {
+        bracketType = 'toilet_bowl'
         if (roundNumber === 1) matchupType = 'Toilet Bowl Round 1'
         else matchupType = 'Last Place'
       } else {
+        bracketType = 'playoff'
         if (roundNumber === 1) matchupType = 'Wildcard'
         else if (roundNumber === 2) matchupType = 'Semifinal'
         else if (roundNumber === 3) matchupType = 'Championship'
       }
       
-      const formatted = {
+      const team1Name = team1?.display_name || team1?.current_username || 'Unknown'
+      const team2Name = team2?.display_name || team2?.current_username || 'Unknown'
+      const winnerName = winner?.display_name || winner?.current_username || 'TBD'
+      const pointDiff = parseFloat(m.point_differential) || 0
+      
+      const formatted: PostseasonMatchup = {
+        id: m.id,
         week: m.week,
         matchupType,
+        bracketType,
         team1: {
-          name: team1?.display_name || team1?.current_username || 'Unknown',
+          managerId: m.team1_manager_id,
+          name: team1Name,
           seed: seed1,
           points: parseFloat(m.team1_points) || 0,
           isWinner: m.winner_manager_id === m.team1_manager_id,
         },
         team2: {
-          name: team2?.display_name || team2?.current_username || 'Unknown',
+          managerId: m.team2_manager_id,
+          name: team2Name,
           seed: seed2,
           points: parseFloat(m.team2_points) || 0,
           isWinner: m.winner_manager_id === m.team2_manager_id,
         },
+        pointDifferential: pointDiff,
+        winnerName,
+        winnerSeed,
       }
       
       const weekKey = String(m.week)
@@ -171,29 +192,29 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       if (!target[weekKey]) {
         target[weekKey] = { name: matchupType, week: m.week, matchups: [] }
       }
-      (target[weekKey] as { matchups: unknown[] }).matchups.push(formatted)
+      target[weekKey].matchups.push(formatted)
       
       // Track outcomes
       if (matchupType === 'Championship' && m.winner_manager_id) {
         if (m.winner_manager_id === m.team1_manager_id) {
-          champion = team1?.display_name || team1?.current_username || null
+          champion = team1Name
           championSeed = seed1
-          runnerUp = team2?.display_name || team2?.current_username || null
+          runnerUp = team2Name
           runnerUpSeed = seed2
         } else {
-          champion = team2?.display_name || team2?.current_username || null
+          champion = team2Name
           championSeed = seed2
-          runnerUp = team1?.display_name || team1?.current_username || null
+          runnerUp = team1Name
           runnerUpSeed = seed1
         }
       }
       
       if (matchupType === 'Last Place' && m.winner_manager_id) {
         if (m.winner_manager_id === m.team1_manager_id) {
-          toiletBowlLoser = team2?.display_name || team2?.current_username || null
+          toiletBowlLoser = team2Name
           toiletBowlLoserSeed = seed2
         } else {
-          toiletBowlLoser = team1?.display_name || team1?.current_username || null
+          toiletBowlLoser = team1Name
           toiletBowlLoserSeed = seed1
         }
       }
