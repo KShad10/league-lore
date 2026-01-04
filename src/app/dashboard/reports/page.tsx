@@ -53,6 +53,10 @@ export default function ReportsPage() {
   const [customVoice, setCustomVoice] = useState('')
   const [sections, setSections] = useState<ReportSection[]>(DEFAULT_SECTIONS)
   const [useAiCommentary, setUseAiCommentary] = useState(true)
+  
+  // Mobile UI state
+  const [showConfig, setShowConfig] = useState(false)
+  const [showExport, setShowExport] = useState(false)
 
   // Generation State
   const [progress, setProgress] = useState<GenerationProgress>({ status: 'idle' })
@@ -66,8 +70,8 @@ export default function ReportsPage() {
     for (let i = 1; i <= 14; i++) {
       options.push({ value: String(i), label: `Week ${i}` })
     }
-    options.push({ value: '15', label: 'Playoffs Round 1' })
-    options.push({ value: '16', label: 'Playoffs Round 2' })
+    options.push({ value: '15', label: 'Playoffs R1' })
+    options.push({ value: '16', label: 'Playoffs R2' })
     options.push({ value: '17', label: 'Championship' })
     return options
   }, [])
@@ -111,6 +115,7 @@ export default function ReportsPage() {
   const generateReport = async () => {
     if (!currentLeague) return
     
+    setShowConfig(false) // Close config on mobile
     setProgress({ status: 'generating', currentSection: 'Initializing...' })
     setError(null)
     setReportUrl(null)
@@ -170,11 +175,13 @@ export default function ReportsPage() {
     if (iframeRef.current) {
       printIframe(iframeRef.current)
     }
+    setShowExport(false)
   }
 
   const copyHtml = async () => {
     if (!reportHtml) return
     await navigator.clipboard.writeText(reportHtml)
+    setShowExport(false)
   }
 
   const downloadHtml = () => {
@@ -186,6 +193,7 @@ export default function ReportsPage() {
     a.download = `report-${season}-week${week}.html`
     a.click()
     URL.revokeObjectURL(url)
+    setShowExport(false)
   }
 
   useEffect(() => {
@@ -216,10 +224,17 @@ export default function ReportsPage() {
       {/* Action Bar */}
       <div className="action-bar">
         <div className="context">
-          <span className="context-label">{season} Season</span>
-          {reportType === 'weekly' && <span className="context-label">• Week {week}</span>}
+          <span className="context-label">{season}</span>
+          {reportType === 'weekly' && <span className="context-label">• Wk {week}</span>}
         </div>
         <div className="actions">
+          <button 
+            className="btn-config-toggle"
+            onClick={() => setShowConfig(!showConfig)}
+            aria-label="Toggle configuration"
+          >
+            ⚙️
+          </button>
           <button 
             className="btn-generate"
             onClick={generateReport}
@@ -228,20 +243,27 @@ export default function ReportsPage() {
             {isGenerating ? (
               <>
                 <span className="spinner" />
-                Generating...
+                <span className="btn-text">Generating...</span>
               </>
             ) : (
-              'Generate Report'
+              <span className="btn-text">Generate</span>
             )}
           </button>
           {hasReport && (
             <div className="export-dropdown">
-              <button className="btn-export">Export ▾</button>
-              <div className="dropdown-menu">
-                <button onClick={exportPdf}>Download PDF</button>
-                <button onClick={copyHtml}>Copy HTML</button>
-                <button onClick={downloadHtml}>Save HTML</button>
-              </div>
+              <button 
+                className="btn-export"
+                onClick={() => setShowExport(!showExport)}
+              >
+                Export
+              </button>
+              {showExport && (
+                <div className="dropdown-menu">
+                  <button onClick={exportPdf}>Download PDF</button>
+                  <button onClick={copyHtml}>Copy HTML</button>
+                  <button onClick={downloadHtml}>Save HTML</button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -250,108 +272,125 @@ export default function ReportsPage() {
       {/* Main Layout */}
       <div className="main-layout">
         {/* Left: Configuration */}
-        <aside className={`config-panel ${isGenerating ? 'disabled' : ''}`}>
-          <div className="config-group">
-            <label>Report Type</label>
-            <div className="radio-group">
-              <label className={`radio-option ${reportType === 'weekly' ? 'selected' : ''}`}>
-                <input 
-                  type="radio" 
-                  checked={reportType === 'weekly'} 
-                  onChange={() => setReportType('weekly')}
-                  disabled={isGenerating}
-                />
-                <span>Weekly</span>
-              </label>
-              <label className={`radio-option ${reportType === 'postseason' ? 'selected' : ''}`}>
-                <input 
-                  type="radio" 
-                  checked={reportType === 'postseason'} 
-                  onChange={() => setReportType('postseason')}
-                  disabled={isGenerating}
-                />
-                <span>Postseason</span>
-              </label>
-            </div>
+        <aside className={`config-panel ${isGenerating ? 'disabled' : ''} ${showConfig ? 'mobile-open' : ''}`}>
+          <div className="config-header-mobile">
+            <span>Configuration</span>
+            <button onClick={() => setShowConfig(false)} className="close-btn">✕</button>
           </div>
-
-          {reportType === 'weekly' && (
+          
+          <div className="config-scroll">
             <div className="config-group">
-              <label>Week</label>
-              <select value={week} onChange={(e) => setWeek(e.target.value)} disabled={isGenerating}>
-                {weekOptions.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div className="config-group">
-            <label>Season</label>
-            <select value={season} onChange={(e) => setSeason(e.target.value)} disabled={isGenerating}>
-              {seasonOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="config-group">
-            <label>Template</label>
-            <select value={template} onChange={(e) => setTemplate(e.target.value as ReportTemplate)} disabled={isGenerating}>
-              {Object.values(REPORT_TEMPLATES).map(t => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="config-group">
-            <label>Voice</label>
-            <select value={voice} onChange={(e) => setVoice(e.target.value as VoicePreset)} disabled={isGenerating}>
-              {Object.values(VOICE_PRESETS).map(v => (
-                <option key={v.id} value={v.id}>{v.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {voice === 'custom' && (
-            <div className="config-group">
-              <textarea
-                value={customVoice}
-                onChange={(e) => setCustomVoice(e.target.value.slice(0, 150))}
-                placeholder="Describe your custom voice..."
-                maxLength={150}
-                disabled={isGenerating}
-              />
-            </div>
-          )}
-
-          <div className="config-group">
-            <label className="checkbox-inline">
-              <input 
-                type="checkbox"
-                checked={useAiCommentary}
-                onChange={() => setUseAiCommentary(!useAiCommentary)}
-                disabled={isGenerating}
-              />
-              <span>AI Commentary</span>
-            </label>
-          </div>
-
-          <div className="config-group">
-            <label>Include Sections</label>
-            <div className="section-list">
-              {sections.map(section => (
-                <label key={section.id} className="checkbox-row">
+              <label>Report Type</label>
+              <div className="radio-group">
+                <label className={`radio-option ${reportType === 'weekly' ? 'selected' : ''}`}>
                   <input 
-                    type="checkbox"
-                    checked={section.enabled}
-                    onChange={() => toggleSection(section.id)}
+                    type="radio" 
+                    checked={reportType === 'weekly'} 
+                    onChange={() => setReportType('weekly')}
                     disabled={isGenerating}
                   />
-                  <span>{section.title}</span>
+                  <span>Weekly</span>
                 </label>
-              ))}
+                <label className={`radio-option ${reportType === 'postseason' ? 'selected' : ''}`}>
+                  <input 
+                    type="radio" 
+                    checked={reportType === 'postseason'} 
+                    onChange={() => setReportType('postseason')}
+                    disabled={isGenerating}
+                  />
+                  <span>Postseason</span>
+                </label>
+              </div>
             </div>
+
+            <div className="config-row-inline">
+              {reportType === 'weekly' && (
+                <div className="config-group flex-1">
+                  <label>Week</label>
+                  <select value={week} onChange={(e) => setWeek(e.target.value)} disabled={isGenerating}>
+                    {weekOptions.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="config-group flex-1">
+                <label>Season</label>
+                <select value={season} onChange={(e) => setSeason(e.target.value)} disabled={isGenerating}>
+                  {seasonOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="config-row-inline">
+              <div className="config-group flex-1">
+                <label>Template</label>
+                <select value={template} onChange={(e) => setTemplate(e.target.value as ReportTemplate)} disabled={isGenerating}>
+                  {Object.values(REPORT_TEMPLATES).map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="config-group flex-1">
+                <label>Voice</label>
+                <select value={voice} onChange={(e) => setVoice(e.target.value as VoicePreset)} disabled={isGenerating}>
+                  {Object.values(VOICE_PRESETS).map(v => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {voice === 'custom' && (
+              <div className="config-group">
+                <textarea
+                  value={customVoice}
+                  onChange={(e) => setCustomVoice(e.target.value.slice(0, 150))}
+                  placeholder="Describe your custom voice..."
+                  maxLength={150}
+                  disabled={isGenerating}
+                />
+              </div>
+            )}
+
+            <div className="config-group">
+              <label className="checkbox-inline">
+                <input 
+                  type="checkbox"
+                  checked={useAiCommentary}
+                  onChange={() => setUseAiCommentary(!useAiCommentary)}
+                  disabled={isGenerating}
+                />
+                <span>AI Commentary</span>
+              </label>
+            </div>
+
+            <div className="config-group">
+              <label>Include Sections</label>
+              <div className="section-grid">
+                {sections.map(section => (
+                  <label key={section.id} className="checkbox-chip">
+                    <input 
+                      type="checkbox"
+                      checked={section.enabled}
+                      onChange={() => toggleSection(section.id)}
+                      disabled={isGenerating}
+                    />
+                    <span>{section.title}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          <div className="config-footer-mobile">
+            <button className="btn-generate-mobile" onClick={generateReport} disabled={isGenerating}>
+              {isGenerating ? 'Generating...' : 'Generate Report'}
+            </button>
           </div>
         </aside>
 
@@ -361,9 +400,10 @@ export default function ReportsPage() {
             <div className="empty-state">
               <div className="empty-icon">📄</div>
               <h3>Ready to Generate</h3>
-              <p>Configure your report settings, then click Generate</p>
-              <button className="btn-generate-cta" onClick={generateReport}>
-                Generate Report
+              <p>Configure settings and tap Generate</p>
+              <button className="btn-generate-cta" onClick={() => setShowConfig(true)}>
+                <span className="mobile-only">Configure Report</span>
+                <span className="desktop-only">Generate Report</span>
               </button>
             </div>
           )}
@@ -404,7 +444,7 @@ export default function ReportsPage() {
           )}
         </main>
 
-        {/* Right: Navigate (only after generation) */}
+        {/* Right: Navigate (desktop only) */}
         <aside className="navigate-panel">
           <div className="panel-section">
             <h4>Navigate</h4>
@@ -431,6 +471,9 @@ export default function ReportsPage() {
           )}
         </aside>
       </div>
+
+      {/* Mobile overlay backdrop */}
+      {showConfig && <div className="mobile-backdrop" onClick={() => setShowConfig(false)} />}
 
       <style jsx>{`
         .reports-page {
@@ -469,8 +512,19 @@ export default function ReportsPage() {
 
         .actions {
           display: flex;
-          gap: 12px;
+          gap: 8px;
           align-items: center;
+        }
+
+        .btn-config-toggle {
+          display: none;
+          width: 40px;
+          height: 40px;
+          font-size: 1.25rem;
+          background: var(--surface-sunken);
+          border: 1px solid var(--border-light);
+          border-radius: 6px;
+          cursor: pointer;
         }
 
         .btn-generate {
@@ -525,7 +579,6 @@ export default function ReportsPage() {
         }
 
         .dropdown-menu {
-          display: none;
           position: absolute;
           top: 100%;
           right: 0;
@@ -533,20 +586,16 @@ export default function ReportsPage() {
           background: white;
           border: 1px solid var(--border-light);
           border-radius: 6px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
           z-index: 100;
           min-width: 140px;
-        }
-
-        .export-dropdown:hover .dropdown-menu {
-          display: block;
         }
 
         .dropdown-menu button {
           display: block;
           width: 100%;
-          padding: 10px 14px;
-          font-size: 0.8125rem;
+          padding: 12px 14px;
+          font-size: 0.875rem;
           text-align: left;
           background: none;
           border: none;
@@ -582,10 +631,28 @@ export default function ReportsPage() {
           pointer-events: none;
         }
 
+        .config-header-mobile,
+        .config-footer-mobile {
+          display: none;
+        }
+
+        .config-scroll {
+          display: contents;
+        }
+
+        .config-row-inline {
+          display: flex;
+          gap: 12px;
+        }
+
         .config-group {
           display: flex;
           flex-direction: column;
           gap: 6px;
+        }
+
+        .config-group.flex-1 {
+          flex: 1;
         }
 
         .config-group > label {
@@ -598,7 +665,7 @@ export default function ReportsPage() {
         .config-group textarea {
           width: 100%;
           padding: 8px 10px;
-          font-size: 0.8125rem;
+          font-size: 0.875rem;
           border: 1px solid var(--border-light);
           border-radius: 4px;
           background: white;
@@ -657,24 +724,36 @@ export default function ReportsPage() {
 
         .checkbox-inline input {
           accent-color: var(--accent-primary);
+          width: 16px;
+          height: 16px;
         }
 
-        .section-list {
+        .section-grid {
           display: flex;
-          flex-direction: column;
+          flex-wrap: wrap;
           gap: 6px;
         }
 
-        .checkbox-row {
+        .checkbox-chip {
           display: flex;
           align-items: center;
-          gap: 8px;
-          font-size: 0.8125rem;
+          gap: 6px;
+          padding: 6px 10px;
+          font-size: 0.75rem;
+          background: white;
+          border: 1px solid var(--border-light);
+          border-radius: 4px;
           cursor: pointer;
+          transition: all 0.15s;
         }
 
-        .checkbox-row input {
-          accent-color: var(--accent-primary);
+        .checkbox-chip:has(input:checked) {
+          background: rgba(45, 80, 22, 0.1);
+          border-color: var(--accent-primary);
+        }
+
+        .checkbox-chip input {
+          display: none;
         }
 
         /* Preview Panel */
@@ -695,6 +774,7 @@ export default function ReportsPage() {
           align-items: center;
           gap: 12px;
           text-align: center;
+          padding: 20px;
         }
 
         .empty-icon {
@@ -730,8 +810,13 @@ export default function ReportsPage() {
           background: var(--accent-secondary);
         }
 
+        .mobile-only {
+          display: none;
+        }
+
         .skeleton {
           width: 280px;
+          max-width: 100%;
           padding: 20px;
           background: var(--surface);
           border: 1px solid var(--border-light);
@@ -870,33 +955,261 @@ export default function ReportsPage() {
           font-weight: 500;
         }
 
-        /* Responsive */
+        .mobile-backdrop {
+          display: none;
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           TABLET BREAKPOINT (900px)
+           ═══════════════════════════════════════════════════════════════ */
         @media (max-width: 900px) {
           .main-layout {
-            grid-template-columns: 1fr;
-            grid-template-rows: auto 1fr auto;
-          }
-
-          .config-panel {
-            border-right: none;
-            border-bottom: 1px solid var(--border-light);
-            flex-direction: row;
-            flex-wrap: wrap;
-            gap: 12px;
-          }
-
-          .config-group {
-            min-width: 140px;
+            grid-template-columns: 200px 1fr;
           }
 
           .navigate-panel {
-            border-left: none;
-            border-top: 1px solid var(--border-light);
-            flex-direction: row;
+            display: none;
           }
 
           .preview-panel {
-            min-height: 400px;
+            min-height: 300px;
+          }
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           MOBILE BREAKPOINT (640px)
+           ═══════════════════════════════════════════════════════════════ */
+        @media (max-width: 640px) {
+          .reports-page {
+            height: calc(100vh - 60px);
+          }
+
+          /* Action Bar Mobile */
+          .action-bar {
+            padding: 10px 12px;
+          }
+
+          .context-label {
+            font-size: 0.8125rem;
+          }
+
+          .btn-config-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+
+          .btn-generate {
+            padding: 10px 14px;
+          }
+
+          .btn-text {
+            display: none;
+          }
+
+          .btn-generate::after {
+            content: '▶';
+            font-size: 0.75rem;
+          }
+
+          .btn-generate:disabled::after {
+            content: '';
+          }
+
+          .btn-export {
+            padding: 10px 12px;
+            font-size: 0.8125rem;
+          }
+
+          .dropdown-menu {
+            right: -12px;
+          }
+
+          /* Main Layout Mobile */
+          .main-layout {
+            grid-template-columns: 1fr;
+            grid-template-rows: 1fr;
+          }
+
+          /* Config Panel - Slide-up Sheet */
+          .config-panel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            top: auto;
+            height: auto;
+            max-height: 85vh;
+            border-right: none;
+            border-top: 1px solid var(--border-light);
+            border-radius: 16px 16px 0 0;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+            transform: translateY(100%);
+            transition: transform 0.3s ease;
+            z-index: 200;
+            gap: 12px;
+            padding: 0;
+          }
+
+          .config-panel.mobile-open {
+            transform: translateY(0);
+          }
+
+          .config-header-mobile {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            border-bottom: 1px solid var(--border-light);
+            font-weight: 600;
+            font-size: 1rem;
+          }
+
+          .close-btn {
+            width: 32px;
+            height: 32px;
+            font-size: 1.25rem;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+          }
+
+          .config-scroll {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            padding: 16px;
+            overflow-y: auto;
+            max-height: calc(85vh - 140px);
+          }
+
+          .config-footer-mobile {
+            display: block;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border-light);
+            background: var(--surface);
+          }
+
+          .btn-generate-mobile {
+            width: 100%;
+            padding: 14px;
+            font-size: 1rem;
+            font-weight: 600;
+            background: var(--accent-primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+          }
+
+          .btn-generate-mobile:disabled {
+            opacity: 0.6;
+          }
+
+          /* Mobile Backdrop */
+          .mobile-backdrop {
+            display: block;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 150;
+          }
+
+          /* Preview Panel Mobile */
+          .preview-panel {
+            padding: 12px;
+          }
+
+          .empty-state h3 {
+            font-size: 1rem;
+          }
+
+          .empty-state p {
+            font-size: 0.8125rem;
+          }
+
+          .empty-icon {
+            font-size: 2.5rem;
+          }
+
+          .mobile-only {
+            display: inline;
+          }
+
+          .desktop-only {
+            display: none;
+          }
+
+          .btn-generate-cta {
+            padding: 14px 24px;
+          }
+
+          .skeleton {
+            width: 100%;
+            padding: 16px;
+          }
+
+          /* Sections as chips on mobile */
+          .section-grid {
+            gap: 8px;
+          }
+
+          .checkbox-chip {
+            padding: 8px 12px;
+            font-size: 0.8125rem;
+          }
+
+          /* Inline rows stack on mobile */
+          .config-row-inline {
+            flex-direction: column;
+            gap: 12px;
+          }
+
+          .config-group select {
+            padding: 12px;
+            font-size: 1rem;
+          }
+
+          .radio-option {
+            padding: 12px;
+            font-size: 0.875rem;
+          }
+
+          .checkbox-inline {
+            font-size: 0.875rem;
+            padding: 8px 0;
+          }
+
+          .checkbox-inline input {
+            width: 20px;
+            height: 20px;
+          }
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           SMALL MOBILE (380px)
+           ═══════════════════════════════════════════════════════════════ */
+        @media (max-width: 380px) {
+          .action-bar {
+            padding: 8px 10px;
+          }
+
+          .context-label {
+            font-size: 0.75rem;
+          }
+
+          .actions {
+            gap: 6px;
+          }
+
+          .btn-generate {
+            padding: 8px 12px;
+          }
+
+          .btn-config-toggle {
+            width: 36px;
+            height: 36px;
           }
         }
       `}</style>

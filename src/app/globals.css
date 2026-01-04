@@ -1166,6 +1166,10 @@ a:focus-visible {
    RESPONSIVE ADJUSTMENTS
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   TABLET BREAKPOINT (768px)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 @media (max-width: 768px) {
   .page-container {
     padding: var(--space-md);
@@ -1208,5 +1212,238 @@ a:focus-visible {
   
   .rivalry-field label {
     text-align: left;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOBILE BREAKPOINT (640px)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+  :root {
+    --space-xl: 1.25rem;
+    --space-2xl: 2rem;
+    --space-3xl: 2.5rem;
+  }
+
+  html {
+    font-size: 15px;
+  }
+
+  body {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+  }
+
+  h2 {
+    font-size: 1.25rem;
+  }
+
+  .page-container {
+    padding: var(--space-sm);
+  }
+
+  .page-header {
+    padding: var(--space-md) 0;
+  }
+
+  .page-title {
+    font-size: 1.25rem;
+    letter-spacing: 0.05em;
+  }
+
+  .page-subtitle {
+    font-size: 0.75rem;
+  }
+
+  .section-header {
+    margin-bottom: var(--space-md);
+  }
+
+  .section-title {
+    font-size: 1rem;
+  }
+
+  /* Tables on mobile */
+  .table-container {
+    margin: var(--space-md) calc(-1 * var(--space-sm));
+    padding: 0 var(--space-sm);
+  }
+
+  .data-table {
+    font-size: 0.75rem;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: var(--space-xs) var(--space-sm);
+  }
+
+  .data-table th {
+    font-size: 0.6875rem;
+  }
+
+  /* Cards on mobile */
+  .card {
+    padding: var(--space-md);
+  }
+
+  .card-title {
+    font-size: 0.875rem;
+  }
+
+  /* Buttons on mobile - larger touch targets */
+  .btn {
+    padding: var(--space-sm) var(--space-md);
+    min-height: 44px;
+  }
+
+  /* Summary stats */
+  .summary-row {
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+  }
+
+  .summary-stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    text-align: left;
+  }
+
+  .summary-value {
+    font-size: 1rem;
+  }
+
+  /* Bracket on mobile */
+  .bracket-matchup {
+    padding: var(--space-sm);
+  }
+
+  .bracket-team {
+    padding: var(--space-xs) 0;
+  }
+
+  /* Modal on mobile */
+  .modal-overlay {
+    padding: var(--space-sm);
+    align-items: flex-end;
+  }
+
+  .modal-content {
+    max-height: 85vh;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .modal-header,
+  .modal-body,
+  .modal-footer {
+    padding: var(--space-md);
+  }
+
+  .modal-header h2 {
+    font-size: 1.125rem;
+  }
+
+  /* Manager cards */
+  .manager-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .manager-stats {
+    flex-wrap: wrap;
+    gap: var(--space-md);
+  }
+
+  /* Info banner */
+  .info-banner {
+    font-size: 0.75rem;
+    padding: var(--space-sm);
+  }
+
+  /* Loading indicator */
+  .loading-indicator {
+    padding: var(--space-lg);
+  }
+
+  /* Prose */
+  .prose-container {
+    padding: var(--space-md);
+  }
+
+  .prose-container p {
+    text-align: left;
+    line-height: 1.6;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SMALL MOBILE (380px)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 380px) {
+  html {
+    font-size: 14px;
+  }
+
+  .page-container {
+    padding: var(--space-xs);
+  }
+
+  .data-table {
+    font-size: 0.6875rem;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 4px 6px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOBILE UTILITIES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Hide on mobile */
+@media (max-width: 640px) {
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+/* Hide on desktop */
+@media (min-width: 641px) {
+  .hide-desktop {
+    display: none !important;
+  }
+}
+
+/* Touch-friendly tap targets */
+@media (max-width: 640px) {
+  /* Only apply to standalone interactive elements, not inline/hidden ones */
+  button:not(.inline-btn),
+  a:not(.inline-link),
+  select {
+    min-height: 44px;
+  }
+
+  /* Checkbox/radio sizing handled by parent label touch area */
+  label:has(input[type="checkbox"]),
+  label:has(input[type="radio"]) {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+}
+
+/* Safe area padding for notched devices */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
