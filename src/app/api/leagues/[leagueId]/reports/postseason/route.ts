@@ -68,7 +68,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }>()
     
     for (const row of (standingsData || [])) {
-      const manager = row.managers as { current_username: string; display_name: string } | null
+      const manager = row.managers as unknown as { current_username: string; display_name: string } | null
       const existing = managerStats.get(row.manager_id) || {
         managerId: row.manager_id,
         name: manager?.display_name || manager?.current_username || 'Unknown',
@@ -126,9 +126,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     let toiletBowlLoser = null, toiletBowlLoserSeed = 0
     
     for (const m of (matchups || [])) {
-      const team1 = m.team1 as { display_name?: string; current_username?: string } | null
-      const team2 = m.team2 as { display_name?: string; current_username?: string } | null
-      const winner = m.winner as { display_name?: string; current_username?: string } | null
+      const team1 = m.team1 as unknown as { display_name?: string; current_username?: string } | null
+      const team2 = m.team2 as unknown as { display_name?: string; current_username?: string } | null
+      const winner = m.winner as unknown as { display_name?: string; current_username?: string } | null
       
       const seed1 = seedMap.get(m.team1_manager_id) || 99
       const seed2 = seedMap.get(m.team2_manager_id) || 99
