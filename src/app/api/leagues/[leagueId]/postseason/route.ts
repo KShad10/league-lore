@@ -224,7 +224,7 @@ async function calculateSeedings(
   }>();
   
   for (const row of standingsData) {
-    const manager = row.managers as { current_username: string; display_name: string } | null;
+    const manager = row.managers as unknown as { current_username: string; display_name: string } | null;
     const existing = managerStats.get(row.manager_id) || {
       managerId: row.manager_id,
       name: manager?.display_name || manager?.current_username || 'Unknown',
