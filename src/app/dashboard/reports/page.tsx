@@ -1,1082 +1,1026 @@
-'use client';
+'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { useLeague } from '@/lib/context/LeagueContext'
 import {
-  NavigationTabs,
-  ControlField,
-  Select,
   Button,
   InfoBanner,
   LoadingIndicator,
-  PageHeader,
-  SectionHeader,
-  Card,
-} from '@/components/ui';
+} from '@/components/ui'
 import {
   VoicePreset,
   ReportTemplate,
   VOICE_PRESETS,
   REPORT_TEMPLATES,
-} from '@/lib/ai/prompts';
-import { printIframe } from '@/lib/pdf';
+} from '@/lib/ai/prompts'
+import { printIframe } from '@/lib/pdf'
 
-const LEAGUE_ID = '31da3d9c-39b9-4acf-991c-0accdbdffb64';
+type ReportType = 'weekly' | 'postseason'
 
-type ReportType = 'weekly' | 'postseason';
-type TabType = 'reports' | 'commentary';
-
-interface WeeklyCommentary {
-  opener: string;
-  matchupCommentaries: Record<string, string>;
-  standingsAnalysis: string;
-  topPerformerSpotlight: string;
-  bottomPerformerRoast: string;
-  playoffPicture?: string;
-  closer: string;
+interface ReportSection {
+  id: string
+  title: string
+  enabled: boolean
+  wordCount?: number
 }
 
-interface PostseasonCommentary {
-  recap: string;
-  championPath: string;
-  toiletBowlSummary: string;
+const DEFAULT_SECTIONS: ReportSection[] = [
+  { id: 'standings', title: 'Standings', enabled: true },
+  { id: 'matchups', title: 'Matchup Recaps', enabled: true },
+  { id: 'awards', title: 'Awards', enabled: true },
+  { id: 'powerRankings', title: 'Power Rankings', enabled: true },
+  { id: 'transactions', title: 'Transactions', enabled: true },
+  { id: 'injuries', title: 'Injury Report', enabled: false },
+]
+
+interface GenerationProgress {
+  status: 'idle' | 'generating' | 'complete' | 'error'
+  currentSection?: string
+  message?: string
 }
-
-type WeeklySection = 'opener' | 'standingsAnalysis' | 'topPerformerSpotlight' | 'bottomPerformerRoast' | 'playoffPicture' | 'closer';
-type PostseasonSection = 'recap' | 'championPath' | 'toiletBowlSummary';
-
-const TABS = [
-  { key: 'reports', label: 'HTML Reports' },
-  { key: 'commentary', label: 'AI Commentary' },
-];
-
-const SEASON_OPTIONS = [
-  { value: '2025', label: '2025' },
-  { value: '2024', label: '2024' },
-  { value: '2023', label: '2023' },
-  { value: '2022', label: '2022' },
-];
-
-const WEEK_OPTIONS = Array.from({ length: 17 }, (_, i) => ({
-  value: String(i + 1),
-  label: `Week ${i + 1}`,
-}));
-
-const VOICE_OPTIONS = Object.values(VOICE_PRESETS).map((v) => ({
-  value: v.id,
-  label: v.name,
-}));
-
-const TEMPLATE_OPTIONS = Object.values(REPORT_TEMPLATES).map((t) => ({
-  value: t.id,
-  label: t.name,
-}));
-
-// Draft storage key
-const getDraftKey = (type: ReportType, season: string, week?: string) =>
-  `league-lore-draft-${type}-${season}${week ? `-w${week}` : ''}`;
 
 export default function ReportsPage() {
-  const [activeTab, setActiveTab] = useState<TabType>('reports');
-  const [reportType, setReportType] = useState<ReportType>('weekly');
-  const [season, setSeason] = useState('2025');
-  const [week, setWeek] = useState('14');
-  const [loading, setLoading] = useState(false);
-  const [reportUrl, setReportUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const router = useRouter()
+  const { currentLeague, loading: leagueLoading } = useLeague()
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  // Template & Voice state
-  const [voice, setVoice] = useState<VoicePreset>('supreme_leader');
-  const [template, setTemplate] = useState<ReportTemplate>('standard');
-  const [customVoice, setCustomVoice] = useState('');
+  // Report Configuration
+  const [reportType, setReportType] = useState<ReportType>('weekly')
+  const [season, setSeason] = useState('')
+  const [week, setWeek] = useState('')
+  const [template, setTemplate] = useState<ReportTemplate>('standard')
+  const [voice, setVoice] = useState<VoicePreset>('supreme_leader')
+  const [customVoice, setCustomVoice] = useState('')
+  const [sections, setSections] = useState<ReportSection[]>(DEFAULT_SECTIONS)
 
-  // AI Commentary state
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [weeklyCommentary, setWeeklyCommentary] = useState<WeeklyCommentary | null>(null);
-  const [postseasonCommentary, setPostseasonCommentary] = useState<PostseasonCommentary | null>(null);
+  // Generation State
+  const [progress, setProgress] = useState<GenerationProgress>({ status: 'idle' })
+  const [reportUrl, setReportUrl] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  // Editing state
-  const [editingSection, setEditingSection] = useState<string | null>(null);
-  const [regeneratingSection, setRegeneratingSection] = useState<string | null>(null);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  // Editing State
+  const [editingSection, setEditingSection] = useState<string | null>(null)
+  const [activePreviewSection, setActivePreviewSection] = useState<string | null>(null)
 
-  // PDF export
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  const selectedVoice = VOICE_PRESETS[voice];
-  const selectedTemplate = REPORT_TEMPLATES[template];
-
-  // Load draft from localStorage
-  useEffect(() => {
-    const draftKey = getDraftKey(reportType, season, reportType === 'weekly' ? week : undefined);
-    const saved = localStorage.getItem(draftKey);
-    if (saved) {
-      try {
-        const draft = JSON.parse(saved);
-        if (reportType === 'weekly' && draft.weeklyCommentary) {
-          setWeeklyCommentary(draft.weeklyCommentary);
-          setLastSaved(new Date(draft.savedAt));
-        } else if (reportType === 'postseason' && draft.postseasonCommentary) {
-          setPostseasonCommentary(draft.postseasonCommentary);
-          setLastSaved(new Date(draft.savedAt));
-        }
-      } catch {
-        // Invalid draft, ignore
-      }
+  // Build week options based on current date
+  const getWeekOptions = useCallback(() => {
+    const options = []
+    // Regular season weeks
+    for (let i = 1; i <= 14; i++) {
+      options.push({ value: String(i), label: `Week ${i}` })
     }
-  }, [reportType, season, week]);
+    // Playoff weeks
+    options.push({ value: '15', label: 'Playoffs Round 1' })
+    options.push({ value: '16', label: 'Playoffs Round 2' })
+    options.push({ value: '17', label: 'Championship Week' })
+    return options
+  }, [])
 
-  // Save draft to localStorage
-  const saveDraft = useCallback(() => {
-    const draftKey = getDraftKey(reportType, season, reportType === 'weekly' ? week : undefined);
-    const draft = {
-      savedAt: new Date().toISOString(),
-      voice,
-      template,
-      weeklyCommentary: reportType === 'weekly' ? weeklyCommentary : null,
-      postseasonCommentary: reportType === 'postseason' ? postseasonCommentary : null,
-    };
-    localStorage.setItem(draftKey, JSON.stringify(draft));
-    setLastSaved(new Date());
-    setHasUnsavedChanges(false);
-  }, [reportType, season, week, voice, template, weeklyCommentary, postseasonCommentary]);
+  // Build season options from league
+  const getSeasonOptions = useCallback(() => {
+    if (!currentLeague) return []
+    const options = []
+    for (let year = currentLeague.current_season; year >= currentLeague.first_season; year--) {
+      options.push({ value: String(year), label: String(year) })
+    }
+    return options
+  }, [currentLeague])
 
-  // Clear draft
-  const clearDraft = () => {
-    const draftKey = getDraftKey(reportType, season, reportType === 'weekly' ? week : undefined);
-    localStorage.removeItem(draftKey);
-    setWeeklyCommentary(null);
-    setPostseasonCommentary(null);
-    setLastSaved(null);
-    setHasUnsavedChanges(false);
-  };
+  // Initialize defaults when league loads
+  useEffect(() => {
+    if (currentLeague) {
+      setSeason(String(currentLeague.current_season))
+      // Default to most recent week (for now, week 14)
+      setWeek('14')
+    }
+  }, [currentLeague])
+
+  // Redirect if no league
+  useEffect(() => {
+    if (!leagueLoading && !currentLeague) {
+      router.push('/onboarding')
+    }
+  }, [leagueLoading, currentLeague, router])
+
+  const toggleSection = (sectionId: string) => {
+    setSections(prev => prev.map(s => 
+      s.id === sectionId ? { ...s, enabled: !s.enabled } : s
+    ))
+  }
 
   const generateReport = async () => {
-    setLoading(true);
-    setError(null);
-    setReportUrl(null);
+    if (!currentLeague) return
+    
+    setProgress({ status: 'generating', currentSection: 'Initializing...' })
+    setError(null)
+    setReportUrl(null)
 
     try {
-      let url = `/api/leagues/${LEAGUE_ID}/reports/${reportType}?season=${season}`;
+      setProgress({ status: 'generating', currentSection: 'Building report data...' })
+      
+      let url = `/api/leagues/${currentLeague.id}/reports/${reportType}?season=${season}`
       if (reportType === 'weekly') {
-        url += `&week=${week}`;
+        url += `&week=${week}`
       }
 
-      const checkResponse = await fetch(`${url}&format=json`);
-      const checkData = await checkResponse.json();
+      const checkResponse = await fetch(`${url}&format=json`)
+      const checkData = await checkResponse.json()
 
       if (!checkData.success) {
-        throw new Error(checkData.error || 'Failed to generate report');
+        throw new Error(checkData.error || 'Failed to generate report')
       }
 
-      setReportUrl(url);
+      setProgress({ status: 'generating', currentSection: 'Rendering preview...' })
+      setReportUrl(url)
+      setProgress({ status: 'complete' })
     } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
+      setError(String(err))
+      setProgress({ status: 'error', message: String(err) })
     }
-  };
-
-  const generateAICommentary = async () => {
-    setAiLoading(true);
-    setAiError(null);
-    setWeeklyCommentary(null);
-    setPostseasonCommentary(null);
-
-    try {
-      const response = await fetch(`/api/leagues/${LEAGUE_ID}/commentary`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: reportType,
-          season: parseInt(season),
-          week: reportType === 'weekly' ? parseInt(week) : undefined,
-          voice,
-          template,
-          customVoice: voice === 'custom' ? customVoice : undefined,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to generate commentary');
-      }
-
-      if (reportType === 'weekly') {
-        setWeeklyCommentary(data.commentary);
-      } else {
-        setPostseasonCommentary(data.commentary);
-      }
-      setHasUnsavedChanges(true);
-    } catch (err) {
-      setAiError(String(err));
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  // Regenerate a single section
-  const regenerateSection = async (sectionKey: string, sectionTitle: string) => {
-    setRegeneratingSection(sectionKey);
-
-    try {
-      const response = await fetch(`/api/leagues/${LEAGUE_ID}/commentary/section`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: reportType,
-          season: parseInt(season),
-          week: reportType === 'weekly' ? parseInt(week) : undefined,
-          voice,
-          template,
-          customVoice: voice === 'custom' ? customVoice : undefined,
-          section: sectionKey,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to regenerate section');
-      }
-
-      // Update the specific section
-      if (reportType === 'weekly' && weeklyCommentary) {
-        setWeeklyCommentary({
-          ...weeklyCommentary,
-          [sectionKey]: data.content,
-        });
-      } else if (reportType === 'postseason' && postseasonCommentary) {
-        setPostseasonCommentary({
-          ...postseasonCommentary,
-          [sectionKey]: data.content,
-        });
-      }
-      setHasUnsavedChanges(true);
-    } catch (err) {
-      setAiError(`Failed to regenerate ${sectionTitle}: ${err}`);
-    } finally {
-      setRegeneratingSection(null);
-    }
-  };
-
-  // Update section content (for editing)
-  const updateSectionContent = (sectionKey: string, content: string) => {
-    if (reportType === 'weekly' && weeklyCommentary) {
-      setWeeklyCommentary({
-        ...weeklyCommentary,
-        [sectionKey]: content,
-      });
-    } else if (reportType === 'postseason' && postseasonCommentary) {
-      setPostseasonCommentary({
-        ...postseasonCommentary,
-        [sectionKey]: content,
-      });
-    }
-    setHasUnsavedChanges(true);
-  };
-
-  // Update matchup commentary
-  const updateMatchupCommentary = (matchupKey: string, content: string) => {
-    if (weeklyCommentary) {
-      setWeeklyCommentary({
-        ...weeklyCommentary,
-        matchupCommentaries: {
-          ...weeklyCommentary.matchupCommentaries,
-          [matchupKey]: content,
-        },
-      });
-      setHasUnsavedChanges(true);
-    }
-  };
-
-  const openInNewTab = () => {
-    if (reportUrl) {
-      window.open(reportUrl, '_blank');
-    }
-  };
-
-  const downloadReport = async () => {
-    if (!reportUrl) return;
-
-    try {
-      const response = await fetch(reportUrl);
-      const html = await response.text();
-
-      const blob = new Blob([html], { type: 'text/html' });
-      const downloadUrl = URL.createObjectURL(blob);
-
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = `league-report-${season}-${reportType === 'weekly' ? `week${week}` : 'postseason'}.html`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(downloadUrl);
-    } catch (err) {
-      setError(`Download failed: ${err}`);
-    }
-  };
+  }
 
   const exportPdf = () => {
     if (iframeRef.current) {
-      printIframe(iframeRef.current);
+      printIframe(iframeRef.current)
     }
-  };
+  }
 
-  const copyCommentaryToClipboard = () => {
-    const commentary = reportType === 'weekly' ? weeklyCommentary : postseasonCommentary;
-    if (!commentary) return;
-
-    let text = '';
-    if (reportType === 'weekly' && weeklyCommentary) {
-      text = `OPENER:\n${weeklyCommentary.opener}\n\n`;
-      text += `STANDINGS ANALYSIS:\n${weeklyCommentary.standingsAnalysis}\n\n`;
-      text += `TOP PERFORMER:\n${weeklyCommentary.topPerformerSpotlight}\n\n`;
-      text += `BOTTOM PERFORMER:\n${weeklyCommentary.bottomPerformerRoast}\n\n`;
-      if (weeklyCommentary.playoffPicture) {
-        text += `PLAYOFF PICTURE:\n${weeklyCommentary.playoffPicture}\n\n`;
-      }
-      text += `MATCHUP COMMENTARIES:\n`;
-      Object.entries(weeklyCommentary.matchupCommentaries).forEach(([matchup, comment]) => {
-        text += `\n${matchup}:\n${comment}\n`;
-      });
-      text += `\nCLOSER:\n${weeklyCommentary.closer}`;
-    } else if (postseasonCommentary) {
-      text = `RECAP:\n${postseasonCommentary.recap}\n\n`;
-      text += `CHAMPION'S PATH:\n${postseasonCommentary.championPath}\n\n`;
-      text += `TOILET BOWL:\n${postseasonCommentary.toiletBowlSummary}`;
+  const copyHtml = async () => {
+    if (!reportUrl) return
+    try {
+      const response = await fetch(reportUrl)
+      const html = await response.text()
+      await navigator.clipboard.writeText(html)
+      // Could add toast notification here
+    } catch (err) {
+      setError(`Copy failed: ${err}`)
     }
+  }
 
-    navigator.clipboard.writeText(text);
-  };
+  const downloadHtml = async () => {
+    if (!reportUrl) return
+    try {
+      const response = await fetch(reportUrl)
+      const html = await response.text()
+      const blob = new Blob([html], { type: 'text/html' })
+      const downloadUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = downloadUrl
+      a.download = `league-report-${season}-${reportType === 'weekly' ? `week${week}` : 'postseason'}.html`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(downloadUrl)
+    } catch (err) {
+      setError(`Download failed: ${err}`)
+    }
+  }
 
-  const hasCommentary = reportType === 'weekly' ? !!weeklyCommentary : !!postseasonCommentary;
+  const selectedVoice = VOICE_PRESETS[voice]
+  const selectedTemplate = REPORT_TEMPLATES[template]
+  const weekOptions = getWeekOptions()
+  const seasonOptions = getSeasonOptions()
+  const isGenerating = progress.status === 'generating'
+
+  if (leagueLoading) {
+    return (
+      <div className="reports-loading">
+        <LoadingIndicator message="Loading..." />
+      </div>
+    )
+  }
+
+  if (!currentLeague) {
+    return null
+  }
 
   return (
-    <div className="page-container">
-      <PageHeader title="Report Generator" subtitle="League Lore" />
-
-      <NavigationTabs
-        tabs={TABS}
-        activeTab={activeTab}
-        onTabChange={(key) => setActiveTab(key as TabType)}
-      />
-
-      {/* Report Type Selection */}
-      <div className="section-block">
-        <div style={{ display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
-          <button
-            onClick={() => setReportType('weekly')}
-            className={`btn ${reportType === 'weekly' ? 'btn-primary' : 'btn-secondary'}`}
-          >
-            Weekly Recap
-          </button>
-          <button
-            onClick={() => setReportType('postseason')}
-            className={`btn ${reportType === 'postseason' ? 'btn-primary' : 'btn-secondary'}`}
-          >
-            Postseason Report
-          </button>
-        </div>
-
-        {/* Controls */}
-        <div className="controls-group">
-          <ControlField label="Season">
-            <Select value={season} onChange={setSeason} options={SEASON_OPTIONS} />
-          </ControlField>
-
-          {reportType === 'weekly' && (
-            <ControlField label="Week">
-              <Select value={week} onChange={setWeek} options={WEEK_OPTIONS} />
-            </ControlField>
-          )}
-
-          {activeTab === 'commentary' && (
-            <>
-              <ControlField label="Template">
-                <Select
-                  value={template}
-                  onChange={(v) => setTemplate(v as ReportTemplate)}
-                  options={TEMPLATE_OPTIONS}
-                />
-              </ControlField>
-
-              <ControlField label="Voice">
-                <Select
-                  value={voice}
-                  onChange={(v) => setVoice(v as VoicePreset)}
-                  options={VOICE_OPTIONS}
-                />
-              </ControlField>
-            </>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-            {activeTab === 'reports' ? (
-              <Button onClick={generateReport} disabled={loading}>
-                {loading ? 'Generating...' : 'Generate Report'}
-              </Button>
-            ) : (
-              <Button
-                onClick={generateAICommentary}
-                disabled={aiLoading || (voice === 'custom' && !customVoice.trim())}
-              >
-                {aiLoading ? 'Generating...' : hasCommentary ? 'Regenerate All' : 'Generate Commentary'}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* Template & Voice Descriptions */}
-        {activeTab === 'commentary' && (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: 'var(--space-lg)',
-              marginTop: 'var(--space-lg)',
-            }}
-          >
-            <div
-              style={{
-                padding: 'var(--space-md)',
-                background: 'var(--surface-sunken)',
-                border: '1px solid var(--border-light)',
-              }}
-            >
-              <div
-                style={{
-                  fontFamily: 'var(--font-sans)',
-                  fontSize: '0.6875rem',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  color: 'var(--foreground-muted)',
-                  marginBottom: 'var(--space-xs)',
-                }}
-              >
-                Template: {selectedTemplate.name}
-              </div>
-              <div style={{ fontSize: '0.875rem', color: 'var(--foreground)' }}>
-                {selectedTemplate.description}
+    <div className="reports-container">
+      {/* Left Panel: Configuration */}
+      <aside className="reports-panel left-panel">
+        <div className="panel-content">
+          {/* Report Scope */}
+          <section className="config-section">
+            <h3 className="config-title">Report Scope</h3>
+            
+            <div className="config-field">
+              <label>Report Type</label>
+              <div className="type-toggle">
+                <button 
+                  className={`type-btn ${reportType === 'weekly' ? 'active' : ''}`}
+                  onClick={() => setReportType('weekly')}
+                  disabled={isGenerating}
+                >
+                  Weekly
+                </button>
+                <button 
+                  className={`type-btn ${reportType === 'postseason' ? 'active' : ''}`}
+                  onClick={() => setReportType('postseason')}
+                  disabled={isGenerating}
+                >
+                  Postseason
+                </button>
               </div>
             </div>
 
-            <div
-              style={{
-                padding: 'var(--space-md)',
-                background: 'var(--surface-sunken)',
-                border: '1px solid var(--border-light)',
-              }}
-            >
-              <div
-                style={{
-                  fontFamily: 'var(--font-sans)',
-                  fontSize: '0.6875rem',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  color: 'var(--foreground-muted)',
-                  marginBottom: 'var(--space-xs)',
-                }}
+            <div className="config-field">
+              <label>Season</label>
+              <select 
+                value={season} 
+                onChange={(e) => setSeason(e.target.value)}
+                disabled={isGenerating}
               >
-                Voice: {selectedVoice.name}
+                {seasonOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {reportType === 'weekly' && (
+              <div className="config-field">
+                <label>Week</label>
+                <select 
+                  value={week} 
+                  onChange={(e) => setWeek(e.target.value)}
+                  disabled={isGenerating}
+                >
+                  {weekOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
               </div>
-              <div style={{ fontSize: '0.875rem', color: 'var(--foreground)' }}>
-                {selectedVoice.description}
+            )}
+          </section>
+
+          {/* Template Selection */}
+          <section className="config-section">
+            <h3 className="config-title">Template</h3>
+            <div className="template-cards">
+              {Object.values(REPORT_TEMPLATES).map(t => (
+                <div 
+                  key={t.id}
+                  className={`template-card ${template === t.id ? 'selected' : ''}`}
+                  onClick={() => !isGenerating && setTemplate(t.id)}
+                >
+                  <div className="template-name">{t.name}</div>
+                  <div className="template-desc">{t.description}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Voice Preset */}
+          <section className="config-section">
+            <h3 className="config-title">Voice</h3>
+            <div className="voice-options">
+              {Object.values(VOICE_PRESETS).map(v => (
+                <label key={v.id} className={`voice-option ${voice === v.id ? 'selected' : ''}`}>
+                  <input 
+                    type="radio" 
+                    name="voice" 
+                    value={v.id}
+                    checked={voice === v.id}
+                    onChange={() => setVoice(v.id)}
+                    disabled={isGenerating}
+                  />
+                  <span className="voice-name">{v.name}</span>
+                  <span className="voice-desc">{v.description}</span>
+                </label>
+              ))}
+            </div>
+
+            {voice === 'custom' && (
+              <textarea
+                className="custom-voice-input"
+                value={customVoice}
+                onChange={(e) => setCustomVoice(e.target.value.slice(0, 150))}
+                placeholder="Describe your custom voice..."
+                maxLength={150}
+                disabled={isGenerating}
+              />
+            )}
+          </section>
+
+          {/* Sections Toggle */}
+          <section className="config-section">
+            <h3 className="config-title">Sections</h3>
+            <div className="sections-list">
+              {sections.map(section => (
+                <label key={section.id} className="section-toggle">
+                  <input 
+                    type="checkbox"
+                    checked={section.enabled}
+                    onChange={() => toggleSection(section.id)}
+                    disabled={isGenerating}
+                  />
+                  <span>{section.title}</span>
+                </label>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        {/* Generate Button */}
+        <div className="panel-footer">
+          <button 
+            className="generate-btn"
+            onClick={generateReport}
+            disabled={isGenerating}
+          >
+            {isGenerating ? (
+              <>
+                <span className="spinner" />
+                Generating...
+              </>
+            ) : (
+              'Generate Report'
+            )}
+          </button>
+        </div>
+      </aside>
+
+      {/* Center Panel: Preview */}
+      <main className="reports-panel center-panel">
+        {progress.status === 'idle' && !reportUrl && (
+          <div className="preview-empty">
+            <div className="preview-placeholder">
+              <div className="placeholder-box header" />
+              <div className="placeholder-box title" />
+              <div className="placeholder-row">
+                <div className="placeholder-box col" />
+                <div className="placeholder-box col" />
               </div>
+              <div className="placeholder-box content" />
+              <div className="placeholder-box content short" />
+            </div>
+            <p className="preview-hint">Configure settings and generate report</p>
+          </div>
+        )}
+
+        {progress.status === 'generating' && (
+          <div className="preview-loading">
+            <div className="skeleton-preview">
+              <div className="skeleton header" />
+              <div className="skeleton title" />
+              <div className="skeleton-row">
+                <div className="skeleton col" />
+                <div className="skeleton col" />
+              </div>
+              <div className="skeleton content" />
+              <div className="skeleton content" />
+            </div>
+            <div className="progress-indicator">
+              <span className="spinner" />
+              <span>{progress.currentSection}</span>
             </div>
           </div>
         )}
 
-        {/* Custom Voice Input */}
-        {activeTab === 'commentary' && voice === 'custom' && (
-          <div style={{ marginTop: 'var(--space-lg)' }}>
-            <label
-              style={{
-                display: 'block',
-                fontFamily: 'var(--font-sans)',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                color: 'var(--foreground)',
-                marginBottom: 'var(--space-xs)',
-              }}
-            >
-              Custom Voice Description
-            </label>
-            <textarea
-              value={customVoice}
-              onChange={(e) => setCustomVoice(e.target.value)}
-              placeholder="Describe your custom voice personality..."
-              style={{
-                width: '100%',
-                minHeight: '100px',
-                padding: 'var(--space-md)',
-                fontFamily: 'var(--font-sans)',
-                fontSize: '0.875rem',
-                color: 'var(--foreground)',
-                background: 'var(--surface-sunken)',
-                border: '1px solid var(--border-medium)',
-                resize: 'vertical',
-              }}
+        {progress.status === 'error' && (
+          <div className="preview-error">
+            <InfoBanner variant="error">
+              {error || 'An error occurred while generating the report.'}
+            </InfoBanner>
+            <Button onClick={generateReport}>Retry</Button>
+          </div>
+        )}
+
+        {reportUrl && progress.status === 'complete' && (
+          <div className="preview-frame-container">
+            <iframe
+              ref={iframeRef}
+              src={reportUrl}
+              className="preview-frame"
+              title="Report Preview"
             />
           </div>
         )}
+      </main>
 
-        {activeTab === 'commentary' && !hasCommentary && (
-          <InfoBanner variant="warning" style={{ marginTop: 'var(--space-lg)' }}>
-            AI commentary generation takes 30-60 seconds as it makes multiple Claude API calls.
-          </InfoBanner>
-        )}
-      </div>
+      {/* Right Panel: Navigator + Actions */}
+      <aside className="reports-panel right-panel">
+        <div className="panel-content">
+          {/* Section Navigator */}
+          <section className="nav-section">
+            <h3 className="nav-title">Sections</h3>
+            {reportUrl ? (
+              <div className="section-nav-list">
+                {sections.filter(s => s.enabled).map(section => (
+                  <button 
+                    key={section.id}
+                    className={`section-nav-item ${activePreviewSection === section.id ? 'active' : ''}`}
+                    onClick={() => setActivePreviewSection(section.id)}
+                  >
+                    <span className="section-nav-name">{section.title}</span>
+                    {section.wordCount && (
+                      <span className="section-nav-count">{section.wordCount} words</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="nav-empty">Generate a report to navigate sections</p>
+            )}
+          </section>
 
-      {/* Error Display */}
-      {(activeTab === 'reports' ? error : aiError) && (
-        <InfoBanner variant="error">{activeTab === 'reports' ? error : aiError}</InfoBanner>
-      )}
-
-      {/* Reports Tab Content */}
-      {activeTab === 'reports' && (
-        <>
-          {loading && <LoadingIndicator message="Generating report..." />}
-
-          {reportUrl && !loading && (
-            <div className="section-block">
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 'var(--space-md)',
-                }}
-              >
-                <h2 className="section-title" style={{ margin: 0 }}>
-                  {reportType === 'weekly' ? `Week ${week} Report Preview` : 'Postseason Report Preview'}
-                </h2>
-                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                  <Button variant="ghost" onClick={openInNewTab}>
-                    Open in New Tab
-                  </Button>
-                  <Button variant="secondary" onClick={downloadReport}>
-                    Download HTML
-                  </Button>
-                  <Button variant="primary" onClick={exportPdf}>
-                    Export PDF
-                  </Button>
+          {/* Metadata */}
+          {reportUrl && (
+            <section className="metadata-section">
+              <h3 className="nav-title">Details</h3>
+              <div className="metadata-list">
+                <div className="metadata-item">
+                  <span className="metadata-label">Template</span>
+                  <span className="metadata-value">{selectedTemplate.name}</span>
+                </div>
+                <div className="metadata-item">
+                  <span className="metadata-label">Voice</span>
+                  <span className="metadata-value">{selectedVoice.name}</span>
+                </div>
+                <div className="metadata-item">
+                  <span className="metadata-label">Generated</span>
+                  <span className="metadata-value">{new Date().toLocaleTimeString()}</span>
                 </div>
               </div>
-
-              <div
-                style={{
-                  border: '1px solid var(--border-light)',
-                  background: 'white',
-                  height: '800px',
-                  overflow: 'hidden',
-                }}
-              >
-                <iframe
-                  ref={iframeRef}
-                  src={reportUrl}
-                  style={{ width: '100%', height: '100%', border: 'none' }}
-                  title="Report Preview"
-                />
-              </div>
-
-              <InfoBanner>
-                <strong>Tip:</strong> Click &ldquo;Export PDF&rdquo; to open the print dialog. Choose &ldquo;Save as PDF&rdquo; as your destination.
-              </InfoBanner>
-            </div>
+            </section>
           )}
+        </div>
 
-          {!reportUrl && !loading && (
-            <Card title="Instructions">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-xl)' }}>
-                <div>
-                  <h4 className="font-semibold mb-2">Weekly Recap</h4>
-                  <p className="text-sm text-muted">
-                    Generates a full week recap including matchup results, standings, top/bottom performers, and playoff picture.
-                  </p>
-                </div>
-                <div>
-                  <h4 className="font-semibold mb-2">Postseason Report</h4>
-                  <p className="text-sm text-muted">
-                    Generates a complete postseason summary with playoff bracket, toilet bowl results, seedings, and final standings.
-                  </p>
-                </div>
-              </div>
-            </Card>
-          )}
-        </>
-      )}
-
-      {/* Commentary Tab Content */}
-      {activeTab === 'commentary' && (
-        <>
-          {aiLoading && (
-            <div style={{ textAlign: 'center', padding: 'var(--space-3xl)' }}>
-              <LoadingIndicator message={`${selectedVoice.name} is composing...`} />
-              <p className="text-muted text-sm mt-2">
-                Generating {reportType === 'weekly' ? 'weekly' : 'postseason'} commentary with Claude AI.
-              </p>
-            </div>
-          )}
-
-          {/* Weekly Commentary Display */}
-          {weeklyCommentary && reportType === 'weekly' && !aiLoading && (
-            <div className="section-block">
-              {/* Header with actions */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 'var(--space-lg)',
-                  flexWrap: 'wrap',
-                  gap: 'var(--space-md)',
-                }}
-              >
-                <SectionHeader
-                  title="Generated Commentary"
-                  context={`${selectedTemplate.name} • ${selectedVoice.name}`}
-                />
-                <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-                  {lastSaved && (
-                    <span style={{ fontSize: '0.75rem', color: 'var(--foreground-muted)' }}>
-                      {hasUnsavedChanges ? 'Unsaved changes' : `Saved ${lastSaved.toLocaleTimeString()}`}
-                    </span>
-                  )}
-                  <Button variant="ghost" onClick={saveDraft} disabled={!hasUnsavedChanges}>
-                    Save Draft
-                  </Button>
-                  <Button variant="ghost" onClick={copyCommentaryToClipboard}>
-                    Copy All
-                  </Button>
-                  <Button variant="ghost" onClick={clearDraft}>
-                    Clear
-                  </Button>
-                </div>
-              </div>
-
-              <InfoBanner style={{ marginBottom: 'var(--space-lg)' }}>
-                Click <strong>Edit</strong> to modify any section, or <strong>Regenerate</strong> to get a new AI version.
-              </InfoBanner>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
-                <EditableCommentarySection
-                  sectionKey="opener"
-                  title="Opening"
-                  content={weeklyCommentary.opener}
-                  variant="primary"
-                  isEditing={editingSection === 'opener'}
-                  isRegenerating={regeneratingSection === 'opener'}
-                  onEdit={() => setEditingSection(editingSection === 'opener' ? null : 'opener')}
-                  onRegenerate={() => regenerateSection('opener', 'Opening')}
-                  onContentChange={(content) => updateSectionContent('opener', content)}
-                />
-
-                <EditableCommentarySection
-                  sectionKey="standingsAnalysis"
-                  title="Standings Analysis"
-                  content={weeklyCommentary.standingsAnalysis}
-                  variant="default"
-                  isEditing={editingSection === 'standingsAnalysis'}
-                  isRegenerating={regeneratingSection === 'standingsAnalysis'}
-                  onEdit={() => setEditingSection(editingSection === 'standingsAnalysis' ? null : 'standingsAnalysis')}
-                  onRegenerate={() => regenerateSection('standingsAnalysis', 'Standings Analysis')}
-                  onContentChange={(content) => updateSectionContent('standingsAnalysis', content)}
-                />
-
-                <EditableCommentarySection
-                  sectionKey="topPerformerSpotlight"
-                  title="Top Performer Spotlight"
-                  content={weeklyCommentary.topPerformerSpotlight}
-                  variant="win"
-                  isEditing={editingSection === 'topPerformerSpotlight'}
-                  isRegenerating={regeneratingSection === 'topPerformerSpotlight'}
-                  onEdit={() => setEditingSection(editingSection === 'topPerformerSpotlight' ? null : 'topPerformerSpotlight')}
-                  onRegenerate={() => regenerateSection('topPerformerSpotlight', 'Top Performer')}
-                  onContentChange={(content) => updateSectionContent('topPerformerSpotlight', content)}
-                />
-
-                <EditableCommentarySection
-                  sectionKey="bottomPerformerRoast"
-                  title="Bottom Performer"
-                  content={weeklyCommentary.bottomPerformerRoast}
-                  variant="loss"
-                  isEditing={editingSection === 'bottomPerformerRoast'}
-                  isRegenerating={regeneratingSection === 'bottomPerformerRoast'}
-                  onEdit={() => setEditingSection(editingSection === 'bottomPerformerRoast' ? null : 'bottomPerformerRoast')}
-                  onRegenerate={() => regenerateSection('bottomPerformerRoast', 'Bottom Performer')}
-                  onContentChange={(content) => updateSectionContent('bottomPerformerRoast', content)}
-                />
-
-                {weeklyCommentary.playoffPicture && (
-                  <EditableCommentarySection
-                    sectionKey="playoffPicture"
-                    title="Playoff Picture"
-                    content={weeklyCommentary.playoffPicture}
-                    variant="gold"
-                    isEditing={editingSection === 'playoffPicture'}
-                    isRegenerating={regeneratingSection === 'playoffPicture'}
-                    onEdit={() => setEditingSection(editingSection === 'playoffPicture' ? null : 'playoffPicture')}
-                    onRegenerate={() => regenerateSection('playoffPicture', 'Playoff Picture')}
-                    onContentChange={(content) => updateSectionContent('playoffPicture', content)}
-                  />
-                )}
-
-                {/* Matchup Commentaries */}
-                <Card title="Matchup Commentaries">
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                    {Object.entries(weeklyCommentary.matchupCommentaries).map(([matchup, comment]) => (
-                      <EditableMatchupSection
-                        key={matchup}
-                        matchupKey={matchup}
-                        content={comment}
-                        isEditing={editingSection === `matchup-${matchup}`}
-                        onEdit={() => setEditingSection(editingSection === `matchup-${matchup}` ? null : `matchup-${matchup}`)}
-                        onContentChange={(content) => updateMatchupCommentary(matchup, content)}
-                      />
-                    ))}
-                  </div>
-                </Card>
-
-                <EditableCommentarySection
-                  sectionKey="closer"
-                  title="Closing"
-                  content={weeklyCommentary.closer}
-                  variant="primary"
-                  isEditing={editingSection === 'closer'}
-                  isRegenerating={regeneratingSection === 'closer'}
-                  onEdit={() => setEditingSection(editingSection === 'closer' ? null : 'closer')}
-                  onRegenerate={() => regenerateSection('closer', 'Closing')}
-                  onContentChange={(content) => updateSectionContent('closer', content)}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Postseason Commentary Display */}
-          {postseasonCommentary && reportType === 'postseason' && !aiLoading && (
-            <div className="section-block">
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 'var(--space-lg)',
-                  flexWrap: 'wrap',
-                  gap: 'var(--space-md)',
-                }}
-              >
-                <SectionHeader
-                  title="Generated Commentary"
-                  context={`${selectedTemplate.name} • ${selectedVoice.name}`}
-                />
-                <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-                  {lastSaved && (
-                    <span style={{ fontSize: '0.75rem', color: 'var(--foreground-muted)' }}>
-                      {hasUnsavedChanges ? 'Unsaved changes' : `Saved ${lastSaved.toLocaleTimeString()}`}
-                    </span>
-                  )}
-                  <Button variant="ghost" onClick={saveDraft} disabled={!hasUnsavedChanges}>
-                    Save Draft
-                  </Button>
-                  <Button variant="ghost" onClick={copyCommentaryToClipboard}>
-                    Copy All
-                  </Button>
-                  <Button variant="ghost" onClick={clearDraft}>
-                    Clear
-                  </Button>
-                </div>
-              </div>
-
-              <InfoBanner style={{ marginBottom: 'var(--space-lg)' }}>
-                Click <strong>Edit</strong> to modify any section, or <strong>Regenerate</strong> to get a new AI version.
-              </InfoBanner>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
-                <EditableCommentarySection
-                  sectionKey="recap"
-                  title="Season Recap"
-                  content={postseasonCommentary.recap}
-                  variant="gold"
-                  isEditing={editingSection === 'recap'}
-                  isRegenerating={regeneratingSection === 'recap'}
-                  onEdit={() => setEditingSection(editingSection === 'recap' ? null : 'recap')}
-                  onRegenerate={() => regenerateSection('recap', 'Season Recap')}
-                  onContentChange={(content) => updateSectionContent('recap', content)}
-                />
-
-                <EditableCommentarySection
-                  sectionKey="championPath"
-                  title="Champion's Path"
-                  content={postseasonCommentary.championPath}
-                  variant="win"
-                  isEditing={editingSection === 'championPath'}
-                  isRegenerating={regeneratingSection === 'championPath'}
-                  onEdit={() => setEditingSection(editingSection === 'championPath' ? null : 'championPath')}
-                  onRegenerate={() => regenerateSection('championPath', "Champion's Path")}
-                  onContentChange={(content) => updateSectionContent('championPath', content)}
-                />
-
-                <EditableCommentarySection
-                  sectionKey="toiletBowlSummary"
-                  title="Toilet Bowl Summary"
-                  content={postseasonCommentary.toiletBowlSummary}
-                  variant="loss"
-                  isEditing={editingSection === 'toiletBowlSummary'}
-                  isRegenerating={regeneratingSection === 'toiletBowlSummary'}
-                  onEdit={() => setEditingSection(editingSection === 'toiletBowlSummary' ? null : 'toiletBowlSummary')}
-                  onRegenerate={() => regenerateSection('toiletBowlSummary', 'Toilet Bowl Summary')}
-                  onContentChange={(content) => updateSectionContent('toiletBowlSummary', content)}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Empty state */}
-          {!aiLoading && !weeklyCommentary && !postseasonCommentary && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-xl)' }}>
-              <Card title="Templates">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                  {Object.values(REPORT_TEMPLATES).map((t) => (
-                    <div
-                      key={t.id}
-                      style={{
-                        padding: 'var(--space-md)',
-                        background: t.id === template ? 'rgba(45, 80, 22, 0.1)' : 'var(--surface-sunken)',
-                        border: `1px solid ${t.id === template ? 'var(--accent-primary)' : 'var(--border-light)'}`,
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => setTemplate(t.id)}
-                    >
-                      <div className="font-semibold" style={{ color: 'var(--accent-primary)' }}>
-                        {t.name}
-                      </div>
-                      <div className="text-sm text-muted">{t.description}</div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-
-              <Card title="Voices">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                  {Object.values(VOICE_PRESETS).map((v) => (
-                    <div
-                      key={v.id}
-                      style={{
-                        padding: 'var(--space-md)',
-                        background: v.id === voice ? 'rgba(45, 80, 22, 0.1)' : 'var(--surface-sunken)',
-                        border: `1px solid ${v.id === voice ? 'var(--accent-primary)' : 'var(--border-light)'}`,
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => setVoice(v.id)}
-                    >
-                      <div className="font-semibold" style={{ color: 'var(--accent-primary)' }}>
-                        {v.name}
-                      </div>
-                      <div className="text-sm text-muted">{v.description}</div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-// Editable commentary section component
-function EditableCommentarySection({
-  sectionKey,
-  title,
-  content,
-  variant = 'default',
-  isEditing,
-  isRegenerating,
-  onEdit,
-  onRegenerate,
-  onContentChange,
-}: {
-  sectionKey: string;
-  title: string;
-  content: string;
-  variant?: 'default' | 'primary' | 'win' | 'loss' | 'gold';
-  isEditing: boolean;
-  isRegenerating: boolean;
-  onEdit: () => void;
-  onRegenerate: () => void;
-  onContentChange: (content: string) => void;
-}) {
-  const borderColors = {
-    default: 'var(--border-light)',
-    primary: 'var(--accent-primary)',
-    win: 'var(--win)',
-    loss: 'var(--loss)',
-    gold: 'var(--accent-gold)',
-  };
-
-  const titleColors = {
-    default: 'var(--foreground)',
-    primary: 'var(--accent-primary)',
-    win: 'var(--win)',
-    loss: 'var(--loss)',
-    gold: 'var(--accent-gold)',
-  };
-
-  return (
-    <div className="card">
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 'var(--space-sm)',
-        }}
-      >
-        <h3
-          className="font-semibold text-sm uppercase tracking-wide"
-          style={{ color: titleColors[variant], margin: 0 }}
-        >
-          {title}
-        </h3>
-        <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
-          <button
-            onClick={onEdit}
-            style={{
-              padding: '0.25rem 0.5rem',
-              fontSize: '0.75rem',
-              fontFamily: 'var(--font-sans)',
-              background: isEditing ? 'var(--accent-primary)' : 'transparent',
-              color: isEditing ? 'var(--background)' : 'var(--foreground-muted)',
-              border: '1px solid var(--border-light)',
-              cursor: 'pointer',
-            }}
+        {/* Export Actions */}
+        <div className="panel-footer">
+          <button 
+            className="export-btn primary"
+            onClick={exportPdf}
+            disabled={!reportUrl}
           >
-            {isEditing ? 'Done' : 'Edit'}
+            Download PDF
           </button>
-          <button
-            onClick={onRegenerate}
-            disabled={isRegenerating}
-            style={{
-              padding: '0.25rem 0.5rem',
-              fontSize: '0.75rem',
-              fontFamily: 'var(--font-sans)',
-              background: 'transparent',
-              color: 'var(--foreground-muted)',
-              border: '1px solid var(--border-light)',
-              cursor: isRegenerating ? 'wait' : 'pointer',
-              opacity: isRegenerating ? 0.5 : 1,
-            }}
+          <button 
+            className="export-btn secondary"
+            onClick={copyHtml}
+            disabled={!reportUrl}
           >
-            {isRegenerating ? '...' : '↻'}
+            Copy HTML
+          </button>
+          <button 
+            className="export-btn tertiary"
+            onClick={downloadHtml}
+            disabled={!reportUrl}
+          >
+            Save HTML
           </button>
         </div>
-      </div>
+      </aside>
 
-      <div
-        style={{
-          borderLeft: `3px solid ${borderColors[variant]}`,
-          paddingLeft: 'var(--space-md)',
-        }}
-      >
-        {isEditing ? (
-          <textarea
-            value={content}
-            onChange={(e) => onContentChange(e.target.value)}
-            style={{
-              width: '100%',
-              minHeight: '150px',
-              padding: 'var(--space-sm)',
-              fontFamily: 'var(--font-serif)',
-              fontSize: '1rem',
-              lineHeight: 1.6,
-              color: 'var(--foreground)',
-              background: 'var(--surface-sunken)',
-              border: '1px solid var(--border-medium)',
-              resize: 'vertical',
-            }}
-          />
-        ) : (
-          <p style={{ whiteSpace: 'pre-line', margin: 0 }}>{content}</p>
-        )}
-      </div>
-    </div>
-  );
-}
+      <style jsx>{`
+        .reports-container {
+          display: grid;
+          grid-template-columns: 280px 1fr 320px;
+          min-height: calc(100vh - 140px);
+          gap: 0;
+        }
 
-// Editable matchup section component
-function EditableMatchupSection({
-  matchupKey,
-  content,
-  isEditing,
-  onEdit,
-  onContentChange,
-}: {
-  matchupKey: string;
-  content: string;
-  isEditing: boolean;
-  onEdit: () => void;
-  onContentChange: (content: string) => void;
-}) {
-  return (
-    <div
-      style={{
-        borderLeft: '2px solid var(--accent-secondary)',
-        paddingLeft: 'var(--space-md)',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '0.25rem',
-        }}
-      >
-        <div className="text-sm font-semibold" style={{ color: 'var(--accent-secondary)' }}>
-          {matchupKey}
-        </div>
-        <button
-          onClick={onEdit}
-          style={{
-            padding: '0.125rem 0.375rem',
-            fontSize: '0.6875rem',
-            fontFamily: 'var(--font-sans)',
-            background: isEditing ? 'var(--accent-primary)' : 'transparent',
-            color: isEditing ? 'var(--background)' : 'var(--foreground-muted)',
-            border: '1px solid var(--border-light)',
-            cursor: 'pointer',
-          }}
-        >
-          {isEditing ? 'Done' : 'Edit'}
-        </button>
-      </div>
-      {isEditing ? (
-        <textarea
-          value={content}
-          onChange={(e) => onContentChange(e.target.value)}
-          style={{
-            width: '100%',
-            minHeight: '80px',
-            padding: 'var(--space-sm)',
-            fontFamily: 'var(--font-serif)',
-            fontSize: '0.9375rem',
-            lineHeight: 1.5,
-            color: 'var(--foreground)',
-            background: 'var(--surface-sunken)',
-            border: '1px solid var(--border-medium)',
-            resize: 'vertical',
-          }}
-        />
-      ) : (
-        <p style={{ margin: 0 }}>{content}</p>
-      )}
+        .reports-loading {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 400px;
+        }
+
+        .reports-panel {
+          display: flex;
+          flex-direction: column;
+          background: var(--surface);
+          border-right: 1px solid var(--border-light);
+        }
+
+        .reports-panel:last-child {
+          border-right: none;
+          border-left: 1px solid var(--border-light);
+        }
+
+        .center-panel {
+          background: var(--surface-sunken);
+          border: none;
+        }
+
+        .panel-content {
+          flex: 1;
+          overflow-y: auto;
+          padding: var(--space-lg);
+        }
+
+        .panel-footer {
+          padding: var(--space-md);
+          border-top: 1px solid var(--border-light);
+          background: var(--surface);
+        }
+
+        /* Config Section Styles */
+        .config-section {
+          margin-bottom: var(--space-xl);
+        }
+
+        .config-title {
+          font-family: var(--font-sans);
+          font-size: 0.6875rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          color: var(--text-muted);
+          margin: 0 0 var(--space-sm);
+        }
+
+        .config-field {
+          margin-bottom: var(--space-md);
+        }
+
+        .config-field label {
+          display: block;
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: var(--foreground);
+          margin-bottom: var(--space-xs);
+        }
+
+        .config-field select {
+          width: 100%;
+          padding: var(--space-sm);
+          font-size: 0.875rem;
+          border: 1px solid var(--border-light);
+          background: var(--background);
+          color: var(--foreground);
+        }
+
+        .type-toggle {
+          display: flex;
+          gap: 0;
+        }
+
+        .type-btn {
+          flex: 1;
+          padding: var(--space-sm);
+          font-size: 0.8125rem;
+          font-weight: 600;
+          border: 1px solid var(--border-light);
+          background: var(--background);
+          color: var(--text-muted);
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .type-btn:first-child {
+          border-radius: 4px 0 0 4px;
+        }
+
+        .type-btn:last-child {
+          border-radius: 0 4px 4px 0;
+          border-left: none;
+        }
+
+        .type-btn.active {
+          background: var(--accent-primary);
+          border-color: var(--accent-primary);
+          color: white;
+        }
+
+        .type-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        /* Template Cards */
+        .template-cards {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-sm);
+        }
+
+        .template-card {
+          padding: var(--space-md);
+          border: 2px solid var(--border-light);
+          background: var(--background);
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .template-card:hover {
+          border-color: var(--accent-primary);
+        }
+
+        .template-card.selected {
+          border-color: var(--accent-primary);
+          background: rgba(45, 80, 22, 0.05);
+        }
+
+        .template-name {
+          font-weight: 600;
+          font-size: 0.875rem;
+          color: var(--foreground);
+          margin-bottom: 2px;
+        }
+
+        .template-desc {
+          font-size: 0.75rem;
+          color: var(--text-muted);
+          line-height: 1.4;
+        }
+
+        /* Voice Options */
+        .voice-options {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-xs);
+        }
+
+        .voice-option {
+          display: flex;
+          flex-direction: column;
+          padding: var(--space-sm);
+          border: 1px solid var(--border-light);
+          background: var(--background);
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .voice-option:hover {
+          border-color: var(--accent-primary);
+        }
+
+        .voice-option.selected {
+          border-color: var(--accent-primary);
+          background: rgba(45, 80, 22, 0.05);
+        }
+
+        .voice-option input {
+          display: none;
+        }
+
+        .voice-name {
+          font-weight: 600;
+          font-size: 0.8125rem;
+          color: var(--foreground);
+        }
+
+        .voice-desc {
+          font-size: 0.6875rem;
+          color: var(--text-muted);
+          margin-top: 2px;
+        }
+
+        .custom-voice-input {
+          width: 100%;
+          min-height: 60px;
+          padding: var(--space-sm);
+          margin-top: var(--space-sm);
+          font-size: 0.8125rem;
+          border: 1px solid var(--border-light);
+          background: var(--background);
+          color: var(--foreground);
+          resize: vertical;
+        }
+
+        /* Sections Toggle */
+        .sections-list {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-xs);
+        }
+
+        .section-toggle {
+          display: flex;
+          align-items: center;
+          gap: var(--space-sm);
+          padding: var(--space-xs) 0;
+          font-size: 0.8125rem;
+          cursor: pointer;
+        }
+
+        .section-toggle input {
+          accent-color: var(--accent-primary);
+        }
+
+        /* Generate Button */
+        .generate-btn {
+          width: 100%;
+          padding: var(--space-md);
+          font-size: 0.875rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          background: var(--accent-primary);
+          color: white;
+          border: none;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: var(--space-sm);
+          transition: background 0.15s ease;
+        }
+
+        .generate-btn:hover:not(:disabled) {
+          background: var(--accent-secondary);
+        }
+
+        .generate-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        /* Preview States */
+        .preview-empty,
+        .preview-loading,
+        .preview-error {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          padding: var(--space-2xl);
+        }
+
+        .preview-placeholder,
+        .skeleton-preview {
+          width: 100%;
+          max-width: 400px;
+          padding: var(--space-xl);
+          border: 2px dashed var(--border-light);
+          background: var(--surface);
+        }
+
+        .skeleton-preview {
+          border-style: solid;
+        }
+
+        .placeholder-box,
+        .skeleton {
+          background: var(--border-light);
+          margin-bottom: var(--space-md);
+        }
+
+        .placeholder-box.header,
+        .skeleton.header {
+          height: 40px;
+          width: 60%;
+        }
+
+        .placeholder-box.title,
+        .skeleton.title {
+          height: 24px;
+          width: 80%;
+        }
+
+        .placeholder-row,
+        .skeleton-row {
+          display: flex;
+          gap: var(--space-md);
+          margin-bottom: var(--space-md);
+        }
+
+        .placeholder-box.col,
+        .skeleton.col {
+          flex: 1;
+          height: 60px;
+          margin-bottom: 0;
+        }
+
+        .placeholder-box.content,
+        .skeleton.content {
+          height: 20px;
+          width: 100%;
+        }
+
+        .placeholder-box.short {
+          width: 70%;
+        }
+
+        .skeleton {
+          animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 0.7; }
+        }
+
+        .preview-hint {
+          margin-top: var(--space-lg);
+          font-size: 0.875rem;
+          color: var(--text-muted);
+        }
+
+        .progress-indicator {
+          display: flex;
+          align-items: center;
+          gap: var(--space-sm);
+          margin-top: var(--space-lg);
+          font-size: 0.875rem;
+          color: var(--accent-primary);
+        }
+
+        .spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid var(--border-light);
+          border-top-color: var(--accent-primary);
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
+        /* Preview Frame */
+        .preview-frame-container {
+          height: 100%;
+          padding: var(--space-lg);
+        }
+
+        .preview-frame {
+          width: 100%;
+          height: 100%;
+          border: 1px solid var(--border-light);
+          background: white;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Right Panel */
+        .nav-section,
+        .metadata-section {
+          margin-bottom: var(--space-xl);
+        }
+
+        .nav-title {
+          font-family: var(--font-sans);
+          font-size: 0.6875rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          color: var(--text-muted);
+          margin: 0 0 var(--space-sm);
+        }
+
+        .nav-empty {
+          font-size: 0.8125rem;
+          color: var(--text-muted);
+          font-style: italic;
+        }
+
+        .section-nav-list {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .section-nav-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: var(--space-sm);
+          background: transparent;
+          border: none;
+          text-align: left;
+          cursor: pointer;
+          transition: background 0.15s ease;
+        }
+
+        .section-nav-item:hover {
+          background: var(--surface-sunken);
+        }
+
+        .section-nav-item.active {
+          background: rgba(45, 80, 22, 0.1);
+          border-left: 3px solid var(--accent-primary);
+        }
+
+        .section-nav-name {
+          font-size: 0.8125rem;
+          font-weight: 500;
+          color: var(--foreground);
+        }
+
+        .section-nav-count {
+          font-size: 0.6875rem;
+          color: var(--text-muted);
+        }
+
+        /* Metadata */
+        .metadata-list {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-sm);
+        }
+
+        .metadata-item {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.8125rem;
+        }
+
+        .metadata-label {
+          color: var(--text-muted);
+        }
+
+        .metadata-value {
+          font-weight: 500;
+          color: var(--foreground);
+        }
+
+        /* Export Buttons */
+        .right-panel .panel-footer {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-sm);
+        }
+
+        .export-btn {
+          width: 100%;
+          padding: var(--space-sm) var(--space-md);
+          font-size: 0.8125rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .export-btn.primary {
+          background: var(--accent-primary);
+          color: white;
+          border: 2px solid var(--accent-primary);
+        }
+
+        .export-btn.primary:hover:not(:disabled) {
+          background: var(--accent-secondary);
+          border-color: var(--accent-secondary);
+        }
+
+        .export-btn.secondary {
+          background: transparent;
+          color: var(--accent-primary);
+          border: 2px solid var(--accent-primary);
+        }
+
+        .export-btn.secondary:hover:not(:disabled) {
+          background: rgba(45, 80, 22, 0.05);
+        }
+
+        .export-btn.tertiary {
+          background: transparent;
+          color: var(--text-muted);
+          border: 2px solid var(--border-light);
+        }
+
+        .export-btn.tertiary:hover:not(:disabled) {
+          color: var(--foreground);
+          border-color: var(--foreground);
+        }
+
+        .export-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 1024px) {
+          .reports-container {
+            grid-template-columns: 1fr;
+            grid-template-rows: auto 1fr auto;
+          }
+
+          .reports-panel {
+            border-right: none;
+            border-bottom: 1px solid var(--border-light);
+          }
+
+          .reports-panel:last-child {
+            border-left: none;
+            border-top: 1px solid var(--border-light);
+          }
+
+          .left-panel .panel-content {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: var(--space-lg);
+          }
+
+          .left-panel .config-section {
+            margin-bottom: 0;
+          }
+
+          .center-panel {
+            min-height: 500px;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .left-panel .panel-content {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
     </div>
-  );
+  )
 }
