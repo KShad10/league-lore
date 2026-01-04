@@ -215,7 +215,7 @@ async function fetchWeeklyData(
   >();
 
   for (const row of seasonScores || []) {
-    const manager = row.managers as {
+    const manager = row.managers as unknown as {
       id: string;
       display_name: string;
       current_username: string;
@@ -364,7 +364,7 @@ async function fetchPostseasonData(
   if (seedings) {
     const aggregated = new Map<string, { wins: number; pf: number; name: string }>();
     for (const row of seedings) {
-      const manager = row.managers as {
+      const manager = row.managers as unknown as {
         id: string;
         display_name: string;
         current_username: string;
