@@ -22,17 +22,15 @@ interface ReportSection {
   id: string
   title: string
   enabled: boolean
-  wordCount?: number
 }
 
 const DEFAULT_SECTIONS: ReportSection[] = [
   { id: 'standings', title: 'Standings', enabled: true },
-  { id: 'matchups', title: 'Matchup Recaps', enabled: true },
+  { id: 'matchups', title: 'Matchups', enabled: true },
   { id: 'awards', title: 'Awards', enabled: true },
   { id: 'powerRankings', title: 'Power Rankings', enabled: false },
   { id: 'playoffPicture', title: 'Playoff Picture', enabled: true },
   { id: 'transactions', title: 'Transactions', enabled: false },
-  { id: 'injuries', title: 'Injury Report', enabled: false },
 ]
 
 interface GenerationProgress {
@@ -62,21 +60,15 @@ export default function ReportsPage() {
   const [reportHtml, setReportHtml] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Editing State
-  const [editingSection, setEditingSection] = useState<string | null>(null)
-  const [activePreviewSection, setActivePreviewSection] = useState<string | null>(null)
-
-  // Build week options based on current date
+  // Build week options
   const getWeekOptions = useCallback(() => {
     const options = []
-    // Regular season weeks
     for (let i = 1; i <= 14; i++) {
       options.push({ value: String(i), label: `Week ${i}` })
     }
-    // Playoff weeks
-    options.push({ value: '15', label: 'Playoffs Round 1' })
-    options.push({ value: '16', label: 'Playoffs Round 2' })
-    options.push({ value: '17', label: 'Championship Week' })
+    options.push({ value: '15', label: 'Playoffs R1' })
+    options.push({ value: '16', label: 'Playoffs R2' })
+    options.push({ value: '17', label: 'Championship' })
     return options
   }, [])
 
@@ -94,7 +86,6 @@ export default function ReportsPage() {
   useEffect(() => {
     if (currentLeague) {
       setSeason(String(currentLeague.current_season))
-      // Default to most recent week (for now, week 14)
       setWeek('14')
     }
   }, [currentLeague])
@@ -112,7 +103,6 @@ export default function ReportsPage() {
     ))
   }
 
-  // Convert sections array to config object for API
   const getSectionsConfig = () => {
     const config: Record<string, { enabled: boolean }> = {}
     sections.forEach(s => {
@@ -132,8 +122,7 @@ export default function ReportsPage() {
     try {
       const baseUrl = `/api/leagues/${currentLeague.id}/reports/${reportType}`
       
-      // First check if data exists with GET (fast)
-      setProgress({ status: 'generating', currentSection: 'Checking data availability...' })
+      setProgress({ status: 'generating', currentSection: 'Checking data...' })
       const checkUrl = `${baseUrl}?season=${season}${reportType === 'weekly' ? `&week=${week}` : ''}&format=json`
       const checkResponse = await fetch(checkUrl)
       const checkData = await checkResponse.json()
@@ -142,7 +131,6 @@ export default function ReportsPage() {
         throw new Error(checkData.error || 'Failed to generate report')
       }
 
-      // Now generate full report with POST (includes AI commentary)
       setProgress({ 
         status: 'generating', 
         currentSection: useAiCommentary ? 'Generating AI commentary...' : 'Building report...'
@@ -150,9 +138,7 @@ export default function ReportsPage() {
       
       const response = await fetch(baseUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           season: parseInt(season),
           week: parseInt(week),
@@ -169,11 +155,9 @@ export default function ReportsPage() {
         throw new Error(errorData.error || 'Failed to generate report')
       }
 
-      // Get the HTML content
       const html = await response.text()
       setReportHtml(html)
       
-      // Create a blob URL for the iframe
       const blob = new Blob([html], { type: 'text/html' })
       const blobUrl = URL.createObjectURL(blob)
       setReportUrl(blobUrl)
@@ -195,7 +179,6 @@ export default function ReportsPage() {
     if (!reportHtml) return
     try {
       await navigator.clipboard.writeText(reportHtml)
-      // Could add toast notification here
     } catch (err) {
       setError(`Copy failed: ${err}`)
     }
@@ -208,7 +191,7 @@ export default function ReportsPage() {
       const downloadUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = downloadUrl
-      a.download = `league-report-${season}-${reportType === 'weekly' ? `week${week}` : 'postseason'}.html`
+      a.download = `report-${season}-${reportType === 'weekly' ? `week${week}` : 'postseason'}.html`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -218,7 +201,6 @@ export default function ReportsPage() {
     }
   }
 
-  // Cleanup blob URL on unmount or when report changes
   useEffect(() => {
     return () => {
       if (reportUrl && reportUrl.startsWith('blob:')) {
@@ -246,26 +228,32 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="reports-container">
-      {/* Left Panel: Configuration */}
-      <aside className="reports-panel left-panel">
-        <div className="panel-content">
-          {/* Report Scope */}
-          <section className="config-section">
-            <h3 className="config-title">Report Scope</h3>
-            
-            <div className="config-field">
-              <label>Report Type</label>
-              <div className="type-toggle">
+    <div className="reports-page">
+      {/* Compact Header */}
+      <header className="reports-header">
+        <div className="header-left">
+          <h1>{currentLeague.name}</h1>
+          <span className="header-meta">{currentLeague.total_rosters} Teams • {currentLeague.first_season}–{currentLeague.current_season}</span>
+        </div>
+      </header>
+
+      <div className="reports-container">
+        {/* Left Panel: Compact Configuration */}
+        <aside className="config-panel">
+          {/* Row 1: Scope */}
+          <div className="config-row">
+            <div className="config-group">
+              <label>Type</label>
+              <div className="toggle-group">
                 <button 
-                  className={`type-btn ${reportType === 'weekly' ? 'active' : ''}`}
+                  className={`toggle-btn ${reportType === 'weekly' ? 'active' : ''}`}
                   onClick={() => setReportType('weekly')}
                   disabled={isGenerating}
                 >
                   Weekly
                 </button>
                 <button 
-                  className={`type-btn ${reportType === 'postseason' ? 'active' : ''}`}
+                  className={`toggle-btn ${reportType === 'postseason' ? 'active' : ''}`}
                   onClick={() => setReportType('postseason')}
                   disabled={isGenerating}
                 >
@@ -273,74 +261,60 @@ export default function ReportsPage() {
                 </button>
               </div>
             </div>
-
-            <div className="config-field">
+            <div className="config-group">
               <label>Season</label>
-              <select 
-                value={season} 
-                onChange={(e) => setSeason(e.target.value)}
-                disabled={isGenerating}
-              >
+              <select value={season} onChange={(e) => setSeason(e.target.value)} disabled={isGenerating}>
                 {seasonOptions.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
             </div>
-
             {reportType === 'weekly' && (
-              <div className="config-field">
+              <div className="config-group">
                 <label>Week</label>
-                <select 
-                  value={week} 
-                  onChange={(e) => setWeek(e.target.value)}
-                  disabled={isGenerating}
-                >
+                <select value={week} onChange={(e) => setWeek(e.target.value)} disabled={isGenerating}>
                   {weekOptions.map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
               </div>
             )}
-          </section>
+          </div>
 
-          {/* Template Selection */}
-          <section className="config-section">
-            <h3 className="config-title">Template</h3>
-            <div className="template-cards">
-              {Object.values(REPORT_TEMPLATES).map(t => (
-                <div 
-                  key={t.id}
-                  className={`template-card ${template === t.id ? 'selected' : ''}`}
-                  onClick={() => !isGenerating && setTemplate(t.id)}
-                >
-                  <div className="template-name">{t.name}</div>
-                  <div className="template-desc">{t.description}</div>
-                </div>
-              ))}
+          {/* Row 2: Template & Voice */}
+          <div className="config-row">
+            <div className="config-group flex-1">
+              <label>Template</label>
+              <select value={template} onChange={(e) => setTemplate(e.target.value as ReportTemplate)} disabled={isGenerating}>
+                {Object.values(REPORT_TEMPLATES).map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
             </div>
-          </section>
-
-          {/* Voice Preset */}
-          <section className="config-section">
-            <h3 className="config-title">Voice</h3>
-            <div className="voice-options">
-              {Object.values(VOICE_PRESETS).map(v => (
-                <label key={v.id} className={`voice-option ${voice === v.id ? 'selected' : ''}`}>
-                  <input 
-                    type="radio" 
-                    name="voice" 
-                    value={v.id}
-                    checked={voice === v.id}
-                    onChange={() => setVoice(v.id)}
-                    disabled={isGenerating}
-                  />
-                  <span className="voice-name">{v.name}</span>
-                  <span className="voice-desc">{v.description}</span>
-                </label>
-              ))}
+            <div className="config-group flex-1">
+              <label>Voice</label>
+              <select value={voice} onChange={(e) => setVoice(e.target.value as VoicePreset)} disabled={isGenerating}>
+                {Object.values(VOICE_PRESETS).map(v => (
+                  <option key={v.id} value={v.id}>{v.name}</option>
+                ))}
+              </select>
             </div>
+            <div className="config-group ai-toggle">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={useAiCommentary}
+                  onChange={() => setUseAiCommentary(!useAiCommentary)}
+                  disabled={isGenerating}
+                />
+                <span>AI Commentary</span>
+              </label>
+            </div>
+          </div>
 
-            {voice === 'custom' && (
+          {/* Custom Voice Input (conditional) */}
+          {voice === 'custom' && (
+            <div className="config-row">
               <textarea
                 className="custom-voice-input"
                 value={customVoice}
@@ -349,27 +323,15 @@ export default function ReportsPage() {
                 maxLength={150}
                 disabled={isGenerating}
               />
-            )}
-            
-            {/* AI Commentary Toggle */}
-            <label className="ai-toggle">
-              <input 
-                type="checkbox"
-                checked={useAiCommentary}
-                onChange={() => setUseAiCommentary(!useAiCommentary)}
-                disabled={isGenerating}
-              />
-              <span>Generate AI commentary</span>
-              <span className="ai-toggle-hint">(slower but personalized)</span>
-            </label>
-          </section>
+            </div>
+          )}
 
-          {/* Sections Toggle */}
-          <section className="config-section">
-            <h3 className="config-title">Sections</h3>
-            <div className="sections-list">
+          {/* Row 3: Sections */}
+          <div className="config-row sections-row">
+            <label className="row-label">Sections</label>
+            <div className="sections-grid">
               {sections.map(section => (
-                <label key={section.id} className="section-toggle">
+                <label key={section.id} className="section-chip">
                   <input 
                     type="checkbox"
                     checked={section.enabled}
@@ -380,11 +342,9 @@ export default function ReportsPage() {
                 </label>
               ))}
             </div>
-          </section>
-        </div>
+          </div>
 
-        {/* Generate Button */}
-        <div className="panel-footer">
+          {/* Generate Button */}
           <button 
             className="generate-btn"
             onClick={generateReport}
@@ -393,419 +353,334 @@ export default function ReportsPage() {
             {isGenerating ? (
               <>
                 <span className="spinner" />
-                {progress.currentSection || 'Generating...'}
+                {progress.currentSection}
               </>
             ) : (
               'Generate Report'
             )}
           </button>
-        </div>
-      </aside>
+        </aside>
 
-      {/* Center Panel: Preview */}
-      <main className="reports-panel center-panel">
-        {progress.status === 'idle' && !reportUrl && (
-          <div className="preview-empty">
-            <div className="preview-placeholder">
-              <div className="placeholder-box header" />
-              <div className="placeholder-box title" />
-              <div className="placeholder-row">
-                <div className="placeholder-box col" />
-                <div className="placeholder-box col" />
+        {/* Center: Preview */}
+        <main className="preview-panel">
+          {progress.status === 'idle' && !reportUrl && (
+            <div className="preview-empty">
+              <div className="preview-placeholder">
+                <div className="ph-line w60" />
+                <div className="ph-line w80" />
+                <div className="ph-row">
+                  <div className="ph-box" />
+                  <div className="ph-box" />
+                </div>
+                <div className="ph-line w100" />
+                <div className="ph-line w70" />
               </div>
-              <div className="placeholder-box content" />
-              <div className="placeholder-box content short" />
+              <p>Configure and generate report</p>
             </div>
-            <p className="preview-hint">Configure settings and generate report</p>
-          </div>
-        )}
+          )}
 
-        {progress.status === 'generating' && (
-          <div className="preview-loading">
-            <div className="skeleton-preview">
-              <div className="skeleton header" />
-              <div className="skeleton title" />
-              <div className="skeleton-row">
-                <div className="skeleton col" />
-                <div className="skeleton col" />
+          {progress.status === 'generating' && (
+            <div className="preview-loading">
+              <div className="skeleton-preview">
+                <div className="sk-line w60" />
+                <div className="sk-line w80" />
+                <div className="sk-row">
+                  <div className="sk-box" />
+                  <div className="sk-box" />
+                </div>
+                <div className="sk-line w100" />
               </div>
-              <div className="skeleton content" />
-              <div className="skeleton content" />
+              <div className="progress-indicator">
+                <span className="spinner" />
+                <span>{progress.currentSection}</span>
+              </div>
             </div>
-            <div className="progress-indicator">
-              <span className="spinner" />
-              <span>{progress.currentSection}</span>
+          )}
+
+          {progress.status === 'error' && (
+            <div className="preview-error">
+              <InfoBanner variant="error">
+                {error || 'An error occurred.'}
+              </InfoBanner>
+              <Button onClick={generateReport}>Retry</Button>
             </div>
-          </div>
-        )}
+          )}
 
-        {progress.status === 'error' && (
-          <div className="preview-error">
-            <InfoBanner variant="error">
-              {error || 'An error occurred while generating the report.'}
-            </InfoBanner>
-            <Button onClick={generateReport}>Retry</Button>
-          </div>
-        )}
-
-        {reportUrl && progress.status === 'complete' && (
-          <div className="preview-frame-container">
+          {reportUrl && progress.status === 'complete' && (
             <iframe
               ref={iframeRef}
               src={reportUrl}
               className="preview-frame"
               title="Report Preview"
             />
-          </div>
-        )}
-      </main>
-
-      {/* Right Panel: Navigator + Actions */}
-      <aside className="reports-panel right-panel">
-        <div className="panel-content">
-          {/* Section Navigator */}
-          <section className="nav-section">
-            <h3 className="nav-title">Sections</h3>
-            {reportUrl ? (
-              <div className="section-nav-list">
-                {sections.filter(s => s.enabled).map(section => (
-                  <button 
-                    key={section.id}
-                    className={`section-nav-item ${activePreviewSection === section.id ? 'active' : ''}`}
-                    onClick={() => setActivePreviewSection(section.id)}
-                  >
-                    <span className="section-nav-name">{section.title}</span>
-                    {section.wordCount && (
-                      <span className="section-nav-count">{section.wordCount} words</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="nav-empty">Generate a report to navigate sections</p>
-            )}
-          </section>
-
-          {/* Metadata */}
-          {reportUrl && (
-            <section className="metadata-section">
-              <h3 className="nav-title">Details</h3>
-              <div className="metadata-list">
-                <div className="metadata-item">
-                  <span className="metadata-label">Template</span>
-                  <span className="metadata-value">{selectedTemplate.name}</span>
-                </div>
-                <div className="metadata-item">
-                  <span className="metadata-label">Voice</span>
-                  <span className="metadata-value">{selectedVoice.name}</span>
-                </div>
-                <div className="metadata-item">
-                  <span className="metadata-label">AI Commentary</span>
-                  <span className="metadata-value">{useAiCommentary ? 'Enabled' : 'Disabled'}</span>
-                </div>
-                <div className="metadata-item">
-                  <span className="metadata-label">Generated</span>
-                  <span className="metadata-value">{new Date().toLocaleTimeString()}</span>
-                </div>
-              </div>
-            </section>
           )}
-        </div>
+        </main>
 
-        {/* Export Actions */}
-        <div className="panel-footer">
-          <button 
-            className="export-btn primary"
-            onClick={exportPdf}
-            disabled={!reportUrl}
-          >
-            Download PDF
-          </button>
-          <button 
-            className="export-btn secondary"
-            onClick={copyHtml}
-            disabled={!reportUrl}
-          >
-            Copy HTML
-          </button>
-          <button 
-            className="export-btn tertiary"
-            onClick={downloadHtml}
-            disabled={!reportUrl}
-          >
-            Save HTML
-          </button>
-        </div>
-      </aside>
+        {/* Right Panel: Actions & Info */}
+        <aside className="actions-panel">
+          <div className="panel-section">
+            <h3>Export</h3>
+            <div className="action-buttons">
+              <button className="action-btn primary" onClick={exportPdf} disabled={!reportUrl}>
+                Download PDF
+              </button>
+              <button className="action-btn secondary" onClick={copyHtml} disabled={!reportUrl}>
+                Copy HTML
+              </button>
+              <button className="action-btn tertiary" onClick={downloadHtml} disabled={!reportUrl}>
+                Save HTML
+              </button>
+            </div>
+          </div>
+
+          {reportUrl && (
+            <div className="panel-section">
+              <h3>Details</h3>
+              <div className="detail-list">
+                <div className="detail-row">
+                  <span>Template</span>
+                  <span>{selectedTemplate.name}</span>
+                </div>
+                <div className="detail-row">
+                  <span>Voice</span>
+                  <span>{selectedVoice.name}</span>
+                </div>
+                <div className="detail-row">
+                  <span>AI</span>
+                  <span>{useAiCommentary ? 'On' : 'Off'}</span>
+                </div>
+                <div className="detail-row">
+                  <span>Generated</span>
+                  <span>{new Date().toLocaleTimeString()}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="panel-section">
+            <h3>Sections</h3>
+            <div className="section-list">
+              {sections.filter(s => s.enabled).map(s => (
+                <span key={s.id} className="section-tag">{s.title}</span>
+              ))}
+            </div>
+          </div>
+        </aside>
+      </div>
 
       <style jsx>{`
-        .reports-container {
-          display: grid;
-          grid-template-columns: 280px 1fr 320px;
-          min-height: calc(100vh - 140px);
-          gap: 0;
+        .reports-page {
+          display: flex;
+          flex-direction: column;
+          height: calc(100vh - 60px);
+          overflow: hidden;
         }
 
         .reports-loading {
           display: flex;
           align-items: center;
           justify-content: center;
-          min-height: 400px;
+          height: 100%;
         }
 
-        .reports-panel {
-          display: flex;
-          flex-direction: column;
+        /* Header */
+        .reports-header {
+          padding: var(--space-sm) var(--space-lg);
+          border-bottom: 1px solid var(--border-light);
+          background: var(--surface);
+        }
+
+        .header-left h1 {
+          font-size: 1.125rem;
+          font-weight: 600;
+          color: var(--accent-primary);
+          margin: 0;
+        }
+
+        .header-meta {
+          font-size: 0.75rem;
+          color: var(--text-muted);
+        }
+
+        /* Main Container */
+        .reports-container {
+          display: grid;
+          grid-template-columns: 1fr 2fr 240px;
+          flex: 1;
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        /* Config Panel */
+        .config-panel {
+          padding: var(--space-md);
           background: var(--surface);
           border-right: 1px solid var(--border-light);
-        }
-
-        .reports-panel:last-child {
-          border-right: none;
-          border-left: 1px solid var(--border-light);
-        }
-
-        .center-panel {
-          background: var(--surface-sunken);
-          border: none;
-        }
-
-        .panel-content {
-          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-md);
           overflow-y: auto;
-          padding: var(--space-lg);
         }
 
-        .panel-footer {
-          padding: var(--space-md);
-          border-top: 1px solid var(--border-light);
-          background: var(--surface);
+        .config-row {
+          display: flex;
+          gap: var(--space-sm);
+          flex-wrap: wrap;
+          align-items: flex-end;
         }
 
-        /* Config Section Styles */
-        .config-section {
-          margin-bottom: var(--space-xl);
+        .config-group {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          min-width: 80px;
         }
 
-        .config-title {
-          font-family: var(--font-sans);
+        .config-group.flex-1 {
+          flex: 1;
+        }
+
+        .config-group label {
           font-size: 0.6875rem;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          color: var(--text-muted);
-          margin: 0 0 var(--space-sm);
-        }
-
-        .config-field {
-          margin-bottom: var(--space-md);
-        }
-
-        .config-field label {
-          display: block;
-          font-size: 0.75rem;
           font-weight: 600;
-          color: var(--foreground);
-          margin-bottom: var(--space-xs);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: var(--text-muted);
         }
 
-        .config-field select {
-          width: 100%;
-          padding: var(--space-sm);
-          font-size: 0.875rem;
+        .config-group select {
+          padding: 6px 8px;
+          font-size: 0.8125rem;
           border: 1px solid var(--border-light);
           background: var(--background);
           color: var(--foreground);
+          border-radius: 4px;
         }
 
-        .type-toggle {
+        /* Toggle Group */
+        .toggle-group {
           display: flex;
-          gap: 0;
         }
 
-        .type-btn {
-          flex: 1;
-          padding: var(--space-sm);
-          font-size: 0.8125rem;
+        .toggle-btn {
+          padding: 6px 10px;
+          font-size: 0.75rem;
           font-weight: 600;
           border: 1px solid var(--border-light);
           background: var(--background);
           color: var(--text-muted);
           cursor: pointer;
-          transition: all 0.15s ease;
         }
 
-        .type-btn:first-child {
+        .toggle-btn:first-child {
           border-radius: 4px 0 0 4px;
         }
 
-        .type-btn:last-child {
+        .toggle-btn:last-child {
           border-radius: 0 4px 4px 0;
           border-left: none;
         }
 
-        .type-btn.active {
+        .toggle-btn.active {
           background: var(--accent-primary);
           border-color: var(--accent-primary);
           color: white;
         }
 
-        .type-btn:disabled {
+        .toggle-btn:disabled {
           opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        /* Template Cards */
-        .template-cards {
-          display: flex;
-          flex-direction: column;
-          gap: var(--space-sm);
-        }
-
-        .template-card {
-          padding: var(--space-md);
-          border: 2px solid var(--border-light);
-          background: var(--background);
-          cursor: pointer;
-          transition: all 0.15s ease;
-        }
-
-        .template-card:hover {
-          border-color: var(--accent-primary);
-        }
-
-        .template-card.selected {
-          border-color: var(--accent-primary);
-          background: rgba(45, 80, 22, 0.05);
-        }
-
-        .template-name {
-          font-weight: 600;
-          font-size: 0.875rem;
-          color: var(--foreground);
-          margin-bottom: 2px;
-        }
-
-        .template-desc {
-          font-size: 0.75rem;
-          color: var(--text-muted);
-          line-height: 1.4;
-        }
-
-        /* Voice Options */
-        .voice-options {
-          display: flex;
-          flex-direction: column;
-          gap: var(--space-xs);
-        }
-
-        .voice-option {
-          display: flex;
-          flex-direction: column;
-          padding: var(--space-sm);
-          border: 1px solid var(--border-light);
-          background: var(--background);
-          cursor: pointer;
-          transition: all 0.15s ease;
-        }
-
-        .voice-option:hover {
-          border-color: var(--accent-primary);
-        }
-
-        .voice-option.selected {
-          border-color: var(--accent-primary);
-          background: rgba(45, 80, 22, 0.05);
-        }
-
-        .voice-option input {
-          display: none;
-        }
-
-        .voice-name {
-          font-weight: 600;
-          font-size: 0.8125rem;
-          color: var(--foreground);
-        }
-
-        .voice-desc {
-          font-size: 0.6875rem;
-          color: var(--text-muted);
-          margin-top: 2px;
-        }
-
-        .custom-voice-input {
-          width: 100%;
-          min-height: 60px;
-          padding: var(--space-sm);
-          margin-top: var(--space-sm);
-          font-size: 0.8125rem;
-          border: 1px solid var(--border-light);
-          background: var(--background);
-          color: var(--foreground);
-          resize: vertical;
         }
 
         /* AI Toggle */
         .ai-toggle {
+          justify-content: flex-end;
+        }
+
+        .checkbox-label {
           display: flex;
           align-items: center;
-          gap: var(--space-sm);
-          padding: var(--space-sm) 0;
-          margin-top: var(--space-md);
-          font-size: 0.8125rem;
+          gap: 6px;
+          font-size: 0.75rem;
           cursor: pointer;
-          border-top: 1px solid var(--border-light);
-          padding-top: var(--space-md);
+          white-space: nowrap;
         }
 
-        .ai-toggle input {
+        .checkbox-label input {
           accent-color: var(--accent-primary);
         }
-        
-        .ai-toggle-hint {
-          font-size: 0.6875rem;
-          color: var(--text-muted);
-          margin-left: auto;
+
+        /* Custom Voice */
+        .custom-voice-input {
+          width: 100%;
+          min-height: 50px;
+          padding: 8px;
+          font-size: 0.8125rem;
+          border: 1px solid var(--border-light);
+          background: var(--background);
+          border-radius: 4px;
+          resize: none;
         }
 
-        /* Sections Toggle */
-        .sections-list {
-          display: flex;
+        /* Sections */
+        .sections-row {
           flex-direction: column;
-          gap: var(--space-xs);
+          align-items: flex-start;
+          gap: 6px;
         }
 
-        .section-toggle {
+        .row-label {
+          font-size: 0.6875rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: var(--text-muted);
+        }
+
+        .sections-grid {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+
+        .section-chip {
           display: flex;
           align-items: center;
-          gap: var(--space-sm);
-          padding: var(--space-xs) 0;
-          font-size: 0.8125rem;
+          gap: 4px;
+          padding: 4px 8px;
+          font-size: 0.75rem;
+          background: var(--background);
+          border: 1px solid var(--border-light);
+          border-radius: 4px;
           cursor: pointer;
+          transition: all 0.15s;
         }
 
-        .section-toggle input {
-          accent-color: var(--accent-primary);
+        .section-chip:has(input:checked) {
+          background: rgba(45, 80, 22, 0.1);
+          border-color: var(--accent-primary);
+        }
+
+        .section-chip input {
+          display: none;
         }
 
         /* Generate Button */
         .generate-btn {
-          width: 100%;
-          padding: var(--space-md);
-          font-size: 0.875rem;
+          margin-top: auto;
+          padding: 12px;
+          font-size: 0.8125rem;
           font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 0.05em;
           background: var(--accent-primary);
           color: white;
           border: none;
+          border-radius: 4px;
           cursor: pointer;
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: var(--space-sm);
-          transition: background 0.15s ease;
+          gap: 8px;
         }
 
         .generate-btn:hover:not(:disabled) {
@@ -814,105 +689,13 @@ export default function ReportsPage() {
 
         .generate-btn:disabled {
           opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        /* Preview States */
-        .preview-empty,
-        .preview-loading,
-        .preview-error {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          padding: var(--space-2xl);
-        }
-
-        .preview-placeholder,
-        .skeleton-preview {
-          width: 100%;
-          max-width: 400px;
-          padding: var(--space-xl);
-          border: 2px dashed var(--border-light);
-          background: var(--surface);
-        }
-
-        .skeleton-preview {
-          border-style: solid;
-        }
-
-        .placeholder-box,
-        .skeleton {
-          background: var(--border-light);
-          margin-bottom: var(--space-md);
-        }
-
-        .placeholder-box.header,
-        .skeleton.header {
-          height: 40px;
-          width: 60%;
-        }
-
-        .placeholder-box.title,
-        .skeleton.title {
-          height: 24px;
-          width: 80%;
-        }
-
-        .placeholder-row,
-        .skeleton-row {
-          display: flex;
-          gap: var(--space-md);
-          margin-bottom: var(--space-md);
-        }
-
-        .placeholder-box.col,
-        .skeleton.col {
-          flex: 1;
-          height: 60px;
-          margin-bottom: 0;
-        }
-
-        .placeholder-box.content,
-        .skeleton.content {
-          height: 20px;
-          width: 100%;
-        }
-
-        .placeholder-box.short {
-          width: 70%;
-        }
-
-        .skeleton {
-          animation: pulse 1.5s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 0.7; }
-        }
-
-        .preview-hint {
-          margin-top: var(--space-lg);
-          font-size: 0.875rem;
-          color: var(--text-muted);
-        }
-
-        .progress-indicator {
-          display: flex;
-          align-items: center;
-          gap: var(--space-sm);
-          margin-top: var(--space-lg);
-          font-size: 0.875rem;
-          color: var(--accent-primary);
         }
 
         .spinner {
-          width: 16px;
-          height: 16px;
-          border: 2px solid var(--border-light);
-          border-top-color: var(--accent-primary);
+          width: 14px;
+          height: 14px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: white;
           border-radius: 50%;
           animation: spin 0.8s linear infinite;
         }
@@ -921,10 +704,86 @@ export default function ReportsPage() {
           to { transform: rotate(360deg); }
         }
 
-        /* Preview Frame */
-        .preview-frame-container {
-          height: 100%;
+        /* Preview Panel */
+        .preview-panel {
+          background: var(--surface-sunken);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: var(--space-md);
+          overflow: hidden;
+        }
+
+        .preview-empty,
+        .preview-loading,
+        .preview-error {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: var(--space-md);
+        }
+
+        .preview-empty p {
+          font-size: 0.875rem;
+          color: var(--text-muted);
+        }
+
+        .preview-placeholder,
+        .skeleton-preview {
+          width: 300px;
           padding: var(--space-lg);
+          background: var(--surface);
+          border: 2px dashed var(--border-light);
+        }
+
+        .skeleton-preview {
+          border-style: solid;
+        }
+
+        .ph-line, .sk-line {
+          height: 12px;
+          background: var(--border-light);
+          margin-bottom: 10px;
+          border-radius: 2px;
+        }
+
+        .sk-line {
+          animation: pulse 1.5s infinite;
+        }
+
+        .w60 { width: 60%; }
+        .w70 { width: 70%; }
+        .w80 { width: 80%; }
+        .w100 { width: 100%; }
+
+        .ph-row, .sk-row {
+          display: flex;
+          gap: 10px;
+          margin-bottom: 10px;
+        }
+
+        .ph-box, .sk-box {
+          flex: 1;
+          height: 50px;
+          background: var(--border-light);
+          border-radius: 4px;
+        }
+
+        .sk-box {
+          animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 0.7; }
+        }
+
+        .progress-indicator {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 0.875rem;
+          color: var(--accent-primary);
         }
 
         .preview-frame {
@@ -932,181 +791,152 @@ export default function ReportsPage() {
           height: 100%;
           border: 1px solid var(--border-light);
           background: white;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
 
-        /* Right Panel */
-        .nav-section,
-        .metadata-section {
-          margin-bottom: var(--space-xl);
+        /* Actions Panel */
+        .actions-panel {
+          padding: var(--space-md);
+          background: var(--surface);
+          border-left: 1px solid var(--border-light);
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-md);
+          overflow-y: auto;
         }
 
-        .nav-title {
-          font-family: var(--font-sans);
+        .panel-section h3 {
           font-size: 0.6875rem;
           font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 0.1em;
           color: var(--text-muted);
-          margin: 0 0 var(--space-sm);
+          margin: 0 0 8px;
         }
 
-        .nav-empty {
-          font-size: 0.8125rem;
-          color: var(--text-muted);
-          font-style: italic;
-        }
-
-        .section-nav-list {
+        .action-buttons {
           display: flex;
           flex-direction: column;
-          gap: 2px;
+          gap: 6px;
         }
 
-        .section-nav-item {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: var(--space-sm);
-          background: transparent;
-          border: none;
-          text-align: left;
-          cursor: pointer;
-          transition: background 0.15s ease;
-        }
-
-        .section-nav-item:hover {
-          background: var(--surface-sunken);
-        }
-
-        .section-nav-item.active {
-          background: rgba(45, 80, 22, 0.1);
-          border-left: 3px solid var(--accent-primary);
-        }
-
-        .section-nav-name {
-          font-size: 0.8125rem;
-          font-weight: 500;
-          color: var(--foreground);
-        }
-
-        .section-nav-count {
-          font-size: 0.6875rem;
-          color: var(--text-muted);
-        }
-
-        /* Metadata */
-        .metadata-list {
-          display: flex;
-          flex-direction: column;
-          gap: var(--space-sm);
-        }
-
-        .metadata-item {
-          display: flex;
-          justify-content: space-between;
-          font-size: 0.8125rem;
-        }
-
-        .metadata-label {
-          color: var(--text-muted);
-        }
-
-        .metadata-value {
-          font-weight: 500;
-          color: var(--foreground);
-        }
-
-        /* Export Buttons */
-        .right-panel .panel-footer {
-          display: flex;
-          flex-direction: column;
-          gap: var(--space-sm);
-        }
-
-        .export-btn {
-          width: 100%;
-          padding: var(--space-sm) var(--space-md);
-          font-size: 0.8125rem;
+        .action-btn {
+          padding: 8px 12px;
+          font-size: 0.75rem;
           font-weight: 600;
           text-transform: uppercase;
           letter-spacing: 0.03em;
+          border-radius: 4px;
           cursor: pointer;
-          transition: all 0.15s ease;
+          transition: all 0.15s;
         }
 
-        .export-btn.primary {
+        .action-btn.primary {
           background: var(--accent-primary);
           color: white;
-          border: 2px solid var(--accent-primary);
+          border: none;
         }
 
-        .export-btn.primary:hover:not(:disabled) {
+        .action-btn.primary:hover:not(:disabled) {
           background: var(--accent-secondary);
-          border-color: var(--accent-secondary);
         }
 
-        .export-btn.secondary {
+        .action-btn.secondary {
           background: transparent;
           color: var(--accent-primary);
-          border: 2px solid var(--accent-primary);
+          border: 1px solid var(--accent-primary);
         }
 
-        .export-btn.secondary:hover:not(:disabled) {
-          background: rgba(45, 80, 22, 0.05);
-        }
-
-        .export-btn.tertiary {
+        .action-btn.tertiary {
           background: transparent;
           color: var(--text-muted);
-          border: 2px solid var(--border-light);
+          border: 1px solid var(--border-light);
         }
 
-        .export-btn.tertiary:hover:not(:disabled) {
-          color: var(--foreground);
-          border-color: var(--foreground);
-        }
-
-        .export-btn:disabled {
+        .action-btn:disabled {
           opacity: 0.4;
           cursor: not-allowed;
         }
 
-        /* Mobile Responsive */
+        .detail-list {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .detail-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.75rem;
+        }
+
+        .detail-row span:first-child {
+          color: var(--text-muted);
+        }
+
+        .detail-row span:last-child {
+          font-weight: 500;
+        }
+
+        .section-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+        }
+
+        .section-tag {
+          padding: 2px 6px;
+          font-size: 0.6875rem;
+          background: rgba(45, 80, 22, 0.1);
+          color: var(--accent-primary);
+          border-radius: 3px;
+        }
+
+        /* Responsive */
         @media (max-width: 1024px) {
           .reports-container {
             grid-template-columns: 1fr;
             grid-template-rows: auto 1fr auto;
           }
 
-          .reports-panel {
+          .config-panel {
             border-right: none;
             border-bottom: 1px solid var(--border-light);
           }
 
-          .reports-panel:last-child {
+          .actions-panel {
             border-left: none;
             border-top: 1px solid var(--border-light);
+            flex-direction: row;
+            flex-wrap: wrap;
           }
 
-          .left-panel .panel-content {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: var(--space-lg);
+          .panel-section {
+            flex: 1;
+            min-width: 150px;
           }
 
-          .left-panel .config-section {
-            margin-bottom: 0;
-          }
-
-          .center-panel {
-            min-height: 500px;
+          .preview-panel {
+            min-height: 400px;
           }
         }
 
         @media (max-width: 640px) {
-          .left-panel .panel-content {
-            grid-template-columns: 1fr;
+          .config-row {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .config-group {
+            width: 100%;
+          }
+
+          .toggle-group {
+            width: 100%;
+          }
+
+          .toggle-btn {
+            flex: 1;
           }
         }
       `}</style>
