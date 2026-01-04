@@ -440,7 +440,7 @@ function PostseasonContent({
                     <span>
                       <span className="text-muted text-xs">#{s.seed as number}</span>{' '}
                       <span className="font-semibold">{s.name as string}</span>
-                      {s.hasBye && (
+                      {Boolean(s.hasBye) && (
                         <span
                           className="text-xs text-gold uppercase ml-2"
                           style={{
