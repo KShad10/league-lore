@@ -16,8 +16,29 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "League Lore",
-  description: "Fantasy Football League Almanac & Report Generator",
+  title: {
+    default: "League Lore | Fantasy Football Almanac & Report Generator",
+    template: "%s | League Lore"
+  },
+  description: "Transform your fantasy football league data into professional weekly reports with AI-powered commentary. Track rivalries, preserve history, and give your league the coverage it deserves.",
+  keywords: ["fantasy football", "Sleeper", "league reports", "dynasty", "fantasy sports", "commissioner tools"],
+  authors: [{ name: "League Lore" }],
+  openGraph: {
+    title: "League Lore | Fantasy Football Almanac & Report Generator",
+    description: "Transform your league's raw data into professional weekly reports with AI-powered commentary.",
+    type: "website",
+    locale: "en_US",
+    siteName: "League Lore",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "League Lore | Fantasy Football Almanac & Report Generator",
+    description: "Transform your league's raw data into professional weekly reports with AI-powered commentary.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({
