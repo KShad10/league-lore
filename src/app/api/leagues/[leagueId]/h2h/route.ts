@@ -1,73 +1,95 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
 
 interface RouteParams {
-  params: Promise<{ leagueId: string }>;
+  params: Promise<{ leagueId: string }>
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
-  const { leagueId } = await params;
-  const { searchParams } = new URL(request.url);
-  const managerId = searchParams.get('managerId');
-  const matchupType = searchParams.get('type') || 'all'; // 'all', 'regular', 'playoff'
+  const { leagueId } = await params
+  const { searchParams } = new URL(request.url)
+  const managerId = searchParams.get('managerId')
+  const matchupType = searchParams.get('type') || 'all'
   
   try {
+    const supabase = await createClient()
+    
+    // Verify user is authenticated
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+    
     // Get all managers for name lookup
     const { data: managers, error: managersError } = await supabase
       .from('managers')
       .select('id, current_username, display_name')
-      .eq('league_id', leagueId);
+      .eq('league_id', leagueId)
     
     if (managersError) {
       return NextResponse.json(
         { success: false, error: managersError.message },
         { status: 500 }
-      );
+      )
     }
     
-    const managerMap = new Map(managers.map(m => [m.id, m.display_name || m.current_username]));
+    if (!managers || managers.length === 0) {
+      return NextResponse.json({
+        success: true,
+        leagueId,
+        managers: [],
+        records: []
+      })
+    }
+    
+    const managerMap = new Map(managers.map(m => [m.id, m.display_name || m.current_username]))
     
     // Get all matchups for this league
     let query = supabase
       .from('matchups')
       .select('*')
-      .eq('league_id', leagueId);
+      .eq('league_id', leagueId)
     
-    // Filter by matchup type
     if (matchupType === 'regular') {
-      query = query.eq('is_playoff', false);
+      query = query.eq('is_playoff', false)
     } else if (matchupType === 'playoff') {
-      query = query.eq('is_playoff', true);
+      query = query.eq('is_playoff', true)
     }
     
-    const { data: matchups, error: matchupsError } = await query;
+    const { data: matchups, error: matchupsError } = await query
     
     if (matchupsError) {
       return NextResponse.json(
         { success: false, error: matchupsError.message },
         { status: 500 }
-      );
+      )
+    }
+    
+    if (!matchups || matchups.length === 0) {
+      return NextResponse.json({
+        success: true,
+        leagueId,
+        managers: managers.map(m => ({ id: m.id, name: m.display_name || m.current_username })),
+        records: []
+      })
     }
     
     // Calculate H2H records between all manager pairs
     const h2hMap = new Map<string, {
-      manager1Id: string;
-      manager2Id: string;
-      wins: number;
-      losses: number;
-      totalPF: number;
-      totalPA: number;
-      matchupCount: number;
-    }>();
+      manager1Id: string
+      manager2Id: string
+      wins: number
+      losses: number
+      totalPF: number
+      totalPA: number
+      matchupCount: number
+    }>()
     
     for (const matchup of matchups) {
-      // From team1's perspective
-      const key1 = `${matchup.team1_manager_id}-${matchup.team2_manager_id}`;
+      const key1 = `${matchup.team1_manager_id}-${matchup.team2_manager_id}`
       const existing1 = h2hMap.get(key1) || {
         manager1Id: matchup.team1_manager_id,
         manager2Id: matchup.team2_manager_id,
@@ -76,19 +98,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         totalPF: 0,
         totalPA: 0,
         matchupCount: 0,
-      };
-      
-      existing1.totalPF += parseFloat(matchup.team1_points) || 0;
-      existing1.totalPA += parseFloat(matchup.team2_points) || 0;
-      existing1.matchupCount++;
-      
-      if (matchup.winner_manager_id === matchup.team1_manager_id) {
-        existing1.wins++;
-      } else {
-        existing1.losses++;
       }
       
-      h2hMap.set(key1, existing1);
+      existing1.totalPF += parseFloat(String(matchup.team1_points)) || 0
+      existing1.totalPA += parseFloat(String(matchup.team2_points)) || 0
+      existing1.matchupCount++
+      
+      if (matchup.winner_manager_id === matchup.team1_manager_id) {
+        existing1.wins++
+      } else {
+        existing1.losses++
+      }
+      
+      h2hMap.set(key1, existing1)
     }
     
     // Convert to array
@@ -112,18 +134,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       avgMargin: record.matchupCount > 0
         ? Math.round(((record.totalPF - record.totalPA) / record.matchupCount) * 100) / 100
         : 0,
-    }));
+    }))
     
     // Filter by managerId if specified
     if (managerId) {
-      records = records.filter(r => r.manager1.id === managerId);
+      records = records.filter(r => r.manager1.id === managerId)
     }
     
     // Sort by win percentage descending
     records.sort((a, b) => {
-      if (b.winPct !== a.winPct) return b.winPct - a.winPct;
-      return b.wins - a.wins; // Tiebreaker: more wins
-    });
+      if (b.winPct !== a.winPct) return b.winPct - a.winPct
+      return b.wins - a.wins
+    })
     
     return NextResponse.json({
       success: true,
@@ -135,13 +157,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       managers: managers.map(m => ({ id: m.id, name: m.display_name || m.current_username })),
       count: records.length,
       records,
-    });
+    })
     
   } catch (error) {
-    console.error('H2H query failed:', error);
+    console.error('H2H query failed:', error)
     return NextResponse.json(
       { success: false, error: String(error) },
       { status: 500 }
-    );
+    )
   }
 }

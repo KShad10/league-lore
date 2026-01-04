@@ -1,6 +1,8 @@
-'use client';
+'use client'
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import { useLeague } from '@/lib/context/LeagueContext'
 import {
   NavigationTabs,
   ControlField,
@@ -8,26 +10,22 @@ import {
   Button,
   InfoBanner,
   LoadingIndicator,
-  PageHeader,
   SectionHeader,
   Card,
   SummaryRow,
   SummaryStat,
   EmptyState,
-} from '@/components/ui';
+} from '@/components/ui'
 import {
   DataTable,
   RecordCell,
   PointsCell,
   WinLossCell,
   StreakCell,
-} from '@/components/ui/DataTable';
+} from '@/components/ui/DataTable'
 
-const LEAGUE_ID = '31da3d9c-39b9-4acf-991c-0accdbdffb64';
+type TabType = 'standings' | 'postseason' | 'matchups' | 'weekly' | 'managers' | 'h2h' | 'streaks'
 
-type TabType = 'standings' | 'postseason' | 'matchups' | 'weekly' | 'managers' | 'h2h' | 'streaks';
-
-// Tab order per directive: Standings, Postseason, Matchups, Weekly Scores, Managers, H2H Records, Streaks
 const TABS: { key: TabType; label: string; deemphasized?: boolean }[] = [
   { key: 'standings', label: 'Standings' },
   { key: 'postseason', label: 'Postseason' },
@@ -36,15 +34,7 @@ const TABS: { key: TabType; label: string; deemphasized?: boolean }[] = [
   { key: 'managers', label: 'Managers' },
   { key: 'h2h', label: 'H2H Records', deemphasized: true },
   { key: 'streaks', label: 'Streaks', deemphasized: true },
-];
-
-const SEASON_OPTIONS = [
-  { value: '', label: 'All Seasons' },
-  { value: '2025', label: '2025' },
-  { value: '2024', label: '2024' },
-  { value: '2023', label: '2023' },
-  { value: '2022', label: '2022' },
-];
+]
 
 const WEEK_OPTIONS = [
   { value: '', label: 'All Weeks' },
@@ -52,74 +42,132 @@ const WEEK_OPTIONS = [
     value: String(i + 1),
     label: `Week ${i + 1}`,
   })),
-];
+]
 
 export default function StatsPage() {
-  const [activeTab, setActiveTab] = useState<TabType>('standings');
-  const [season, setSeason] = useState('2025');
-  const [week, setWeek] = useState('');
-  const [h2hManager, setH2hManager] = useState('');
-  const [h2hMatchupType, setH2hMatchupType] = useState('all');
-  const [managerList, setManagerList] = useState<{ id: string; name: string }[]>([]);
-  const [data, setData] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const router = useRouter()
+  const { currentLeague, loading: leagueLoading, error: leagueError } = useLeague()
+  
+  const [activeTab, setActiveTab] = useState<TabType>('standings')
+  const [season, setSeason] = useState('')
+  const [week, setWeek] = useState('')
+  const [h2hManager, setH2hManager] = useState('')
+  const [h2hMatchupType, setH2hMatchupType] = useState('all')
+  const [managerList, setManagerList] = useState<{ id: string; name: string }[]>([])
+  const [data, setData] = useState<Record<string, unknown> | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [seasonOptions, setSeasonOptions] = useState<{ value: string; label: string }[]>([])
+
+  // Build season options from league data
+  useEffect(() => {
+    if (currentLeague) {
+      const options = [{ value: '', label: 'All Seasons' }]
+      for (let year = currentLeague.current_season; year >= currentLeague.first_season; year--) {
+        options.push({ value: String(year), label: String(year) })
+      }
+      setSeasonOptions(options)
+      // Default to current season
+      if (!season) {
+        setSeason(String(currentLeague.current_season))
+      }
+    }
+  }, [currentLeague])
 
   const fetchData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    if (!currentLeague) return
+    
+    setLoading(true)
+    setError(null)
 
     try {
-      let url = `/api/leagues/${LEAGUE_ID}/${activeTab}`;
-      const params = new URLSearchParams();
+      let url = `/api/leagues/${currentLeague.id}/${activeTab}`
+      const params = new URLSearchParams()
 
       if (activeTab === 'h2h') {
-        if (h2hManager) params.append('managerId', h2hManager);
-        if (h2hMatchupType !== 'all') params.append('type', h2hMatchupType);
+        if (h2hManager) params.append('managerId', h2hManager)
+        if (h2hMatchupType !== 'all') params.append('type', h2hMatchupType)
       } else if (activeTab === 'postseason') {
-        params.append('season', season || '2025');
+        params.append('season', season || String(currentLeague.current_season))
       } else if (activeTab !== 'managers') {
-        if (season) params.append('season', season);
+        if (season) params.append('season', season)
       }
 
       if (week && (activeTab === 'weekly' || activeTab === 'matchups')) {
-        params.append('week', week);
+        params.append('week', week)
       }
 
       if (params.toString()) {
-        url += `?${params.toString()}`;
+        url += `?${params.toString()}`
       }
 
-      const response = await fetch(url);
-      const result = await response.json();
+      const response = await fetch(url)
+      const result = await response.json()
 
       if (result.success) {
-        setData(result);
+        setData(result)
         if (result.managers) {
-          setManagerList(result.managers);
+          setManagerList(result.managers)
         }
       } else {
-        setError(result.error || 'Failed to fetch data');
+        setError(result.error || 'Failed to fetch data')
       }
     } catch (err) {
-      setError(String(err));
+      setError(String(err))
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [activeTab, season, week, h2hManager, h2hMatchupType]);
+  }, [currentLeague, activeTab, season, week, h2hManager, h2hMatchupType])
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (currentLeague) {
+      fetchData()
+    }
+  }, [fetchData, currentLeague])
 
-  const isAllSeasons = !season;
-  const showSeasonFilter = !['managers', 'h2h'].includes(activeTab);
-  const showWeekFilter = ['weekly', 'matchups'].includes(activeTab);
+  // Redirect to onboarding if no league
+  useEffect(() => {
+    if (!leagueLoading && !currentLeague && !leagueError) {
+      router.push('/onboarding')
+    }
+  }, [leagueLoading, currentLeague, leagueError, router])
+
+  const isAllSeasons = !season
+  const showSeasonFilter = !['managers', 'h2h'].includes(activeTab)
+  const showWeekFilter = ['weekly', 'matchups'].includes(activeTab)
+
+  // Show loading while checking for league
+  if (leagueLoading) {
+    return (
+      <div className="page-container">
+        <LoadingIndicator message="Loading league data..." />
+      </div>
+    )
+  }
+
+  // Show error if league context failed
+  if (leagueError) {
+    return (
+      <div className="page-container">
+        <InfoBanner variant="error">{leagueError}</InfoBanner>
+      </div>
+    )
+  }
+
+  // No league selected
+  if (!currentLeague) {
+    return (
+      <div className="page-container">
+        <EmptyState 
+          title="No League Connected" 
+          description="Connect your Sleeper league to view stats."
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="page-container">
-      <PageHeader title="League Lore" subtitle="OG Papio Dynasty League" />
-
       <NavigationTabs
         tabs={TABS}
         activeTab={activeTab}
@@ -135,8 +183,8 @@ export default function StatsPage() {
               onChange={setSeason}
               options={
                 activeTab === 'postseason'
-                  ? SEASON_OPTIONS.filter((o) => o.value !== '')
-                  : SEASON_OPTIONS
+                  ? seasonOptions.filter((o) => o.value !== '')
+                  : seasonOptions
               }
             />
           </ControlField>
@@ -200,30 +248,17 @@ export default function StatsPage() {
       {/* Content */}
       {data && !loading && (
         <div className="section-block">
-          {/* STANDINGS */}
           {activeTab === 'standings' && <StandingsContent data={data} isAllSeasons={isAllSeasons} />}
-
-          {/* POSTSEASON */}
           {activeTab === 'postseason' && <PostseasonContent data={data} season={season} />}
-
-          {/* MATCHUPS */}
           {activeTab === 'matchups' && <MatchupsContent data={data} />}
-
-          {/* WEEKLY SCORES */}
           {activeTab === 'weekly' && <WeeklyContent data={data} />}
-
-          {/* MANAGERS (Career) */}
           {activeTab === 'managers' && <ManagersContent data={data} />}
-
-          {/* H2H RECORDS */}
           {activeTab === 'h2h' && <H2HContent data={data} />}
-
-          {/* STREAKS */}
           {activeTab === 'streaks' && <StreaksContent data={data} isAllSeasons={isAllSeasons} />}
         </div>
       )}
     </div>
-  );
+  )
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -231,33 +266,33 @@ export default function StatsPage() {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 type StandingRow = {
-  rank: number;
-  season?: number;
-  seasonRank?: number;
-  displayName: string;
+  rank: number
+  season?: number
+  seasonRank?: number
+  displayName: string
   record: {
-    h2h: { wins: number; losses: number };
-    median: { wins: number; losses: number };
-    combined: { wins: number; losses: number };
-    allPlay: { wins: number; losses: number; rank?: number };
-  };
-  points: { for: number; against: number; forRank: number; againstRank: number };
-};
+    h2h: { wins: number; losses: number }
+    median: { wins: number; losses: number }
+    combined: { wins: number; losses: number }
+    allPlay: { wins: number; losses: number; rank?: number }
+  }
+  points: { for: number; against: number; forRank: number; againstRank: number }
+}
 
 function StandingsContent({
   data,
   isAllSeasons,
 }: {
-  data: Record<string, unknown>;
-  isAllSeasons: boolean;
+  data: Record<string, unknown>
+  isAllSeasons: boolean
 }) {
-  const standings = (data.standings as Array<Record<string, unknown>>) || [];
+  const standings = (data.standings as Array<Record<string, unknown>>) || []
 
   if (standings.length === 0) {
-    return <EmptyState title="No standings data available" />;
+    return <EmptyState title="No standings data available" />
   }
 
-  const typedStandings = standings as unknown as StandingRow[];
+  const typedStandings = standings as unknown as StandingRow[]
 
   return (
     <>
@@ -360,7 +395,7 @@ function StandingsContent({
         defaultSort={{ key: 'rank', direction: 'asc' }}
       />
     </>
-  );
+  )
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -371,17 +406,16 @@ function PostseasonContent({
   data,
   season,
 }: {
-  data: Record<string, unknown>;
-  season: string;
+  data: Record<string, unknown>
+  season: string
 }) {
-  const summary = data.summary as Record<string, unknown> | undefined;
-  const seedings = (data.seedings as Array<Record<string, unknown>>) || [];
+  const summary = data.summary as Record<string, unknown> | undefined
+  const seedings = (data.seedings as Array<Record<string, unknown>>) || []
 
   return (
     <>
       <SectionHeader title="Postseason" context={`${season || '2025'} Season`} />
 
-      {/* Summary Banner */}
       {summary && (
         <SummaryRow>
           <SummaryStat
@@ -420,7 +454,6 @@ function PostseasonContent({
         </SummaryRow>
       )}
 
-      {/* Seedings */}
       {seedings.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)', marginTop: 'var(--space-xl)' }}>
           <Card title="Playoff Bracket">
@@ -488,7 +521,6 @@ function PostseasonContent({
         </div>
       )}
 
-      {/* Bracket Rounds */}
       {data.playoff && (
         <BracketSection
           title="Playoff Bracket"
@@ -513,7 +545,7 @@ function PostseasonContent({
         />
       )}
     </>
-  );
+  )
 }
 
 function BracketSection({
@@ -521,15 +553,15 @@ function BracketSection({
   rounds,
   type,
 }: {
-  title: string;
-  rounds: Record<string, unknown>;
-  type: 'playoff' | 'place' | 'toilet';
+  title: string
+  rounds: Record<string, unknown>
+  type: 'playoff' | 'place' | 'toilet'
 }) {
-  if (!rounds) return null;
+  if (!rounds) return null
   
-  const roundEntries = Object.entries(rounds).sort(([a], [b]) => parseInt(a) - parseInt(b));
+  const roundEntries = Object.entries(rounds).sort(([a], [b]) => parseInt(a) - parseInt(b))
 
-  if (roundEntries.length === 0) return null;
+  if (roundEntries.length === 0) return null
 
   return (
     <div style={{ marginTop: 'var(--space-2xl)' }}>
@@ -560,11 +592,11 @@ function BracketSection({
       >
         {roundEntries.map(([weekKey, roundData]) => {
           const round = roundData as {
-            name: string;
-            week: number;
-            matchups: Array<Record<string, unknown>>;
-            byes?: Array<{ seed: number; name: string }>;
-          };
+            name: string
+            week: number
+            matchups: Array<Record<string, unknown>>
+            byes?: Array<{ seed: number; name: string }>
+          }
 
           return (
             <div key={weekKey}>
@@ -590,10 +622,10 @@ function BracketSection({
               ))}
 
               {(round.matchups || []).map((m, i) => {
-                const team1 = m.team1 as Record<string, unknown>;
-                const team2 = m.team2 as Record<string, unknown>;
+                const team1 = m.team1 as Record<string, unknown>
+                const team2 = m.team2 as Record<string, unknown>
                 const isChampionship =
-                  type === 'playoff' && String(m.matchupType).includes('Championship');
+                  type === 'playoff' && String(m.matchupType).includes('Championship')
 
                 return (
                   <div
@@ -616,14 +648,14 @@ function BracketSection({
                       <span className="bracket-score">{team2.points as number}</span>
                     </div>
                   </div>
-                );
+                )
               })}
             </div>
-          );
+          )
         })}
       </div>
     </div>
-  );
+  )
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -631,20 +663,20 @@ function BracketSection({
    ═══════════════════════════════════════════════════════════════════════════ */
 
 type MatchupRow = {
-  season: number;
-  week: number;
-  team1: { name: string; points: number; managerId: string };
-  team2: { name: string; points: number; managerId: string };
-  winner: { managerId: string };
-  pointDifferential: number;
-  isPlayoff: boolean;
-  isToiletBowl: boolean;
-  matchupType: string;
-};
+  season: number
+  week: number
+  team1: { name: string; points: number; managerId: string }
+  team2: { name: string; points: number; managerId: string }
+  winner: { managerId: string }
+  pointDifferential: number
+  isPlayoff: boolean
+  isToiletBowl: boolean
+  matchupType: string
+}
 
 function MatchupsContent({ data }: { data: Record<string, unknown> }) {
-  const matchups = (data.matchups as Array<Record<string, unknown>>) || [];
-  const summary = data.summary as Record<string, unknown> | undefined;
+  const matchups = (data.matchups as Array<Record<string, unknown>>) || []
+  const summary = data.summary as Record<string, unknown> | undefined
 
   if (matchups.length === 0) {
     return (
@@ -652,10 +684,10 @@ function MatchupsContent({ data }: { data: Record<string, unknown> }) {
         <SectionHeader title="Matchups" context="No data" />
         <EmptyState title="No matchups found" description="Try adjusting your filters" />
       </>
-    );
+    )
   }
 
-  const typedMatchups = matchups as unknown as MatchupRow[];
+  const typedMatchups = matchups as unknown as MatchupRow[]
 
   return (
     <>
@@ -749,7 +781,7 @@ function MatchupsContent({ data }: { data: Record<string, unknown> }) {
         defaultSort={{ key: 'week', direction: 'desc' }}
       />
     </>
-  );
+  )
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -757,23 +789,23 @@ function MatchupsContent({ data }: { data: Record<string, unknown> }) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 type WeeklyRow = {
-  season: number;
-  week: number;
-  managerName: string;
-  points: { for: number };
-  opponentName: string;
+  season: number
+  week: number
+  managerName: string
+  points: { for: number }
+  opponentName: string
   results: {
-    weeklyRank: number;
-    h2hWin: boolean;
-    medianWin: boolean;
-    allPlayWins: number;
-    allPlayLosses: number;
-  };
-};
+    weeklyRank: number
+    h2hWin: boolean
+    medianWin: boolean
+    allPlayWins: number
+    allPlayLosses: number
+  }
+}
 
 function WeeklyContent({ data }: { data: Record<string, unknown> }) {
-  const scores = (data.scores as Array<Record<string, unknown>>) || [];
-  const summary = data.summary as Record<string, unknown> | undefined;
+  const scores = (data.scores as Array<Record<string, unknown>>) || []
+  const summary = data.summary as Record<string, unknown> | undefined
 
   if (scores.length === 0) {
     return (
@@ -781,10 +813,10 @@ function WeeklyContent({ data }: { data: Record<string, unknown> }) {
         <SectionHeader title="Weekly Scores" context="No data" />
         <EmptyState title="No scores found" description="Try adjusting your filters" />
       </>
-    );
+    )
   }
 
-  const typedScores = scores as unknown as WeeklyRow[];
+  const typedScores = scores as unknown as WeeklyRow[]
 
   return (
     <>
@@ -863,7 +895,7 @@ function WeeklyContent({ data }: { data: Record<string, unknown> }) {
         defaultSort={{ key: 'points.for', direction: 'desc' }}
       />
     </>
-  );
+  )
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -871,26 +903,26 @@ function WeeklyContent({ data }: { data: Record<string, unknown> }) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 type ManagerRow = {
-  rank: number;
-  displayName: string;
+  rank: number
+  displayName: string
   career: {
-    combined: { wins: number; losses: number; winPct: number; rank: number };
-    h2h: { wins: number; losses: number; winPct: number; rank: number };
-    median: { wins: number; losses: number; winPct: number; rank: number };
-    allPlay: { wins: number; losses: number; winPct: number; rank: number };
+    combined: { wins: number; losses: number; winPct: number; rank: number }
+    h2h: { wins: number; losses: number; winPct: number; rank: number }
+    median: { wins: number; losses: number; winPct: number; rank: number }
+    allPlay: { wins: number; losses: number; winPct: number; rank: number }
     points: {
-      totalPF: number;
-      totalPA: number;
-      avgPerWeek: number;
-      pfRank: number;
-      paRank: number;
-    };
-    totalWeeks: number;
-  };
-};
+      totalPF: number
+      totalPA: number
+      avgPerWeek: number
+      pfRank: number
+      paRank: number
+    }
+    totalWeeks: number
+  }
+}
 
 function ManagersContent({ data }: { data: Record<string, unknown> }) {
-  const managers = (data.managers as Array<Record<string, unknown>>) || [];
+  const managers = (data.managers as Array<Record<string, unknown>>) || []
 
   if (managers.length === 0) {
     return (
@@ -898,10 +930,10 @@ function ManagersContent({ data }: { data: Record<string, unknown> }) {
         <SectionHeader title="Managers" context="Career Statistics" />
         <EmptyState title="No manager data available" />
       </>
-    );
+    )
   }
 
-  const typedManagers = managers as unknown as ManagerRow[];
+  const typedManagers = managers as unknown as ManagerRow[]
 
   return (
     <>
@@ -1006,7 +1038,7 @@ function ManagersContent({ data }: { data: Record<string, unknown> }) {
         defaultSort={{ key: 'rank', direction: 'asc' }}
       />
     </>
-  );
+  )
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1014,18 +1046,18 @@ function ManagersContent({ data }: { data: Record<string, unknown> }) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 type H2HRow = {
-  manager1: { name: string };
-  manager2: { name: string };
-  wins: number;
-  losses: number;
-  winPct: number;
-  pointsFor: number;
-  pointsAgainst: number;
-  avgMargin: number;
-};
+  manager1: { name: string }
+  manager2: { name: string }
+  wins: number
+  losses: number
+  winPct: number
+  pointsFor: number
+  pointsAgainst: number
+  avgMargin: number
+}
 
 function H2HContent({ data }: { data: Record<string, unknown> }) {
-  const records = (data.records as Array<Record<string, unknown>>) || [];
+  const records = (data.records as Array<Record<string, unknown>>) || []
 
   if (records.length === 0) {
     return (
@@ -1033,10 +1065,10 @@ function H2HContent({ data }: { data: Record<string, unknown> }) {
         <SectionHeader title="Head-to-Head Records" context="All-Time" />
         <EmptyState title="No head-to-head data available" />
       </>
-    );
+    )
   }
 
-  const typedRecords = records as unknown as H2HRow[];
+  const typedRecords = records as unknown as H2HRow[]
 
   return (
     <>
@@ -1106,7 +1138,7 @@ function H2HContent({ data }: { data: Record<string, unknown> }) {
         defaultSort={{ key: 'winPct', direction: 'desc' }}
       />
     </>
-  );
+  )
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1114,37 +1146,37 @@ function H2HContent({ data }: { data: Record<string, unknown> }) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 type StreakRow = {
-  name: string;
+  name: string
   currentStreaks: {
-    h2h: { type: 'W' | 'L' | null; display: string };
-    median: { type: 'W' | 'L' | null; display: string };
-    combined: { type: 'W' | 'L' | null; display: string };
-  };
+    h2h: { type: 'W' | 'L' | null; display: string }
+    median: { type: 'W' | 'L' | null; display: string }
+    combined: { type: 'W' | 'L' | null; display: string }
+  }
   longestStreaks: {
     h2h: {
-      win: { length: number; season?: number };
-      loss: { length: number; season?: number };
-    };
+      win: { length: number; season?: number }
+      loss: { length: number; season?: number }
+    }
     median: {
-      win: { length: number; season?: number };
-      loss: { length: number; season?: number };
-    };
+      win: { length: number; season?: number }
+      loss: { length: number; season?: number }
+    }
     combined: {
-      win: { length: number; season?: number };
-      loss: { length: number; season?: number };
-    };
-  };
-};
+      win: { length: number; season?: number }
+      loss: { length: number; season?: number }
+    }
+  }
+}
 
 function StreaksContent({
   data,
   isAllSeasons,
 }: {
-  data: Record<string, unknown>;
-  isAllSeasons: boolean;
+  data: Record<string, unknown>
+  isAllSeasons: boolean
 }) {
-  const streaks = (data.streaks as Array<Record<string, unknown>>) || [];
-  const leagueRecords = data.leagueRecords as Record<string, Record<string, unknown>> | undefined;
+  const streaks = (data.streaks as Array<Record<string, unknown>>) || []
+  const leagueRecords = data.leagueRecords as Record<string, Record<string, unknown>> | undefined
 
   if (streaks.length === 0) {
     return (
@@ -1155,10 +1187,10 @@ function StreaksContent({
         />
         <EmptyState title="No streak data available" />
       </>
-    );
+    )
   }
 
-  const typedStreaks = streaks as unknown as StreakRow[];
+  const typedStreaks = streaks as unknown as StreakRow[]
 
   return (
     <>
@@ -1167,7 +1199,6 @@ function StreaksContent({
         context={isAllSeasons ? 'All-Time Records' : 'Season Records'}
       />
 
-      {/* League Records Card */}
       {leagueRecords && (
         <Card title="League Records" className="mb-6">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-xl)' }}>
@@ -1176,10 +1207,10 @@ function StreaksContent({
                 Longest Win Streaks
               </h4>
               {['h2hWin', 'medianWin', 'combinedWin'].map((key) => {
-                const record = leagueRecords[key];
-                if (!record) return null;
+                const record = leagueRecords[key]
+                if (!record) return null
                 const label =
-                  key === 'h2hWin' ? 'H2H' : key === 'medianWin' ? 'Median' : 'Combined';
+                  key === 'h2hWin' ? 'H2H' : key === 'medianWin' ? 'Median' : 'Combined'
                 return (
                   <div key={key} className="flex justify-between text-sm mb-1">
                     <span className="text-muted">{label}:</span>
@@ -1192,7 +1223,7 @@ function StreaksContent({
                       </span>
                     </span>
                   </div>
-                );
+                )
               })}
             </div>
             <div>
@@ -1200,10 +1231,10 @@ function StreaksContent({
                 Longest Loss Streaks
               </h4>
               {['h2hLoss', 'medianLoss', 'combinedLoss'].map((key) => {
-                const record = leagueRecords[key];
-                if (!record) return null;
+                const record = leagueRecords[key]
+                if (!record) return null
                 const label =
-                  key === 'h2hLoss' ? 'H2H' : key === 'medianLoss' ? 'Median' : 'Combined';
+                  key === 'h2hLoss' ? 'H2H' : key === 'medianLoss' ? 'Median' : 'Combined'
                 return (
                   <div key={key} className="flex justify-between text-sm mb-1">
                     <span className="text-muted">{label}:</span>
@@ -1216,7 +1247,7 @@ function StreaksContent({
                       </span>
                     </span>
                   </div>
-                );
+                )
               })}
             </div>
           </div>
@@ -1341,5 +1372,5 @@ function StreaksContent({
         defaultSort={{ key: 'name', direction: 'asc' }}
       />
     </>
-  );
+  )
 }

@@ -1,70 +1,73 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
 
 interface RouteParams {
-  params: Promise<{ leagueId: string }>;
+  params: Promise<{ leagueId: string }>
 }
 
 interface StandingRow {
-  managerId: string;
-  username: string;
-  displayName: string;
-  season: number;
-  h2hWins: number;
-  h2hLosses: number;
-  medianWins: number;
-  medianLosses: number;
-  allplayWins: number;
-  allplayLosses: number;
-  pointsFor: number;
-  pointsAgainst: number;
-  weeksPlayed: number;
+  managerId: string
+  username: string
+  displayName: string
+  season: number
+  h2hWins: number
+  h2hLosses: number
+  medianWins: number
+  medianLosses: number
+  allplayWins: number
+  allplayLosses: number
+  pointsFor: number
+  pointsAgainst: number
+  weeksPlayed: number
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
-  const { leagueId } = await params;
-  const { searchParams } = new URL(request.url);
-  const seasonParam = searchParams.get('season');
-  const includePlayoffs = searchParams.get('playoffs') === 'true';
+  const { leagueId } = await params
+  const { searchParams } = new URL(request.url)
+  const seasonParam = searchParams.get('season')
+  const includePlayoffs = searchParams.get('playoffs') === 'true'
   
   try {
+    const supabase = await createClient()
+    
+    // Verify user is authenticated
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+    
     // Get league info
     const { data: league, error: leagueError } = await supabase
       .from('leagues')
-      .select('current_season')
+      .select('current_season, first_season')
       .eq('id', leagueId)
-      .single();
+      .single()
     
     if (leagueError) {
       return NextResponse.json(
         { success: false, error: `League not found: ${leagueError.message}` },
         { status: 404 }
-      );
+      )
     }
     
     // Get league settings history for playoff week starts
     const { data: settingsHistory } = await supabase
       .from('league_settings_history')
-      .select('season, league_settings, scoring_settings')
-      .eq('league_id', leagueId);
+      .select('season, scoring_settings')
+      .eq('league_id', leagueId)
     
-    const playoffStartMap = new Map<number, number>();
+    const playoffStartMap = new Map<number, number>()
     if (settingsHistory) {
       for (const settings of settingsHistory) {
-        const playoffStart = 
-          settings.league_settings?.playoff_week_start ||
-          settings.scoring_settings?.playoff_week_start ||
-          15;
-        playoffStartMap.set(settings.season, playoffStart);
+        const playoffStart = settings.scoring_settings?.playoff_week_start || 15
+        playoffStartMap.set(settings.season, playoffStart)
       }
     }
     
-    // Query weekly scores with explicit foreign key
+    // Query weekly scores with manager info
     let query = supabase
       .from('weekly_scores')
       .select(`
@@ -79,47 +82,57 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         allplay_losses,
         managers!weekly_scores_manager_id_fkey(current_username, display_name)
       `)
-      .eq('league_id', leagueId);
+      .eq('league_id', leagueId)
     
     if (seasonParam) {
-      query = query.eq('season', parseInt(seasonParam));
+      query = query.eq('season', parseInt(seasonParam))
     }
     
-    const { data, error } = await query;
+    const { data, error } = await query
     
     if (error) {
       return NextResponse.json(
         { success: false, error: error.message },
         { status: 500 }
-      );
+      )
+    }
+    
+    if (!data || data.length === 0) {
+      return NextResponse.json({
+        success: true,
+        leagueId,
+        season: seasonParam ? parseInt(seasonParam) : 'all',
+        standings: [],
+        message: 'No data found for this league'
+      })
     }
     
     // Filter to regular season only if not including playoffs
     const filteredData = includePlayoffs 
       ? data 
       : data.filter(row => {
-          const playoffStart = playoffStartMap.get(row.season) || 15;
-          return row.week < playoffStart;
-        });
+          const playoffStart = playoffStartMap.get(row.season) || 15
+          return row.week < playoffStart
+        })
     
     // Aggregate by manager and season
-    const standingsMap = new Map<string, StandingRow>();
+    const standingsMap = new Map<string, StandingRow>()
     
     for (const row of filteredData) {
-      const key = `${row.manager_id}-${row.season}`;
-      const manager = row.managers as unknown as { current_username: string; display_name: string } | null;
-      const existing = standingsMap.get(key);
+      const key = `${row.manager_id}-${row.season}`
+      const manager = row.managers as unknown as { current_username: string; display_name: string } | null
+      const existing = standingsMap.get(key)
       
       if (existing) {
-        existing.h2hWins += row.h2h_win ? 1 : 0;
-        existing.h2hLosses += row.h2h_win === false ? 1 : 0;
-        existing.medianWins += row.median_win ? 1 : 0;
-        existing.medianLosses += row.median_win === false ? 1 : 0;
-        existing.allplayWins += row.allplay_wins || 0;
-        existing.allplayLosses += row.allplay_losses || 0;
-        existing.pointsFor += parseFloat(row.points_for) || 0;
-        existing.pointsAgainst += parseFloat(row.points_against) || 0;
-        existing.weeksPlayed += 1;
+        existing.h2hWins += row.h2h_win ? 1 : 0
+        existing.h2hLosses += row.h2h_win === false ? 1 : 0
+        existing.medianWins += row.median_win ? 1 : 0
+        existing.medianLosses += row.median_win === false ? 1 : 0
+        existing.allplayWins += row.allplay_wins || 0
+        existing.allplayLosses += row.allplay_losses || 0
+        existing.pointsFor += parseFloat(String(row.points_for)) || 0
+        existing.pointsAgainst += parseFloat(String(row.points_against)) || 0
+        existing.weeksPlayed += 1
       } else {
         standingsMap.set(key, {
           managerId: row.manager_id,
@@ -132,33 +145,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           medianLosses: row.median_win === false ? 1 : 0,
           allplayWins: row.allplay_wins || 0,
           allplayLosses: row.allplay_losses || 0,
-          pointsFor: parseFloat(row.points_for) || 0,
-          pointsAgainst: parseFloat(row.points_against) || 0,
+          pointsFor: parseFloat(String(row.points_for)) || 0,
+          pointsAgainst: parseFloat(String(row.points_against)) || 0,
           weeksPlayed: 1,
-        });
+        })
       }
     }
     
     // Convert to array
-    const standingsArray = Array.from(standingsMap.values());
+    const standingsArray = Array.from(standingsMap.values())
     
-    // Calculate season ranks (rank within each season)
-    const seasonRanks = new Map<string, number>();
-    const seasons = [...new Set(standingsArray.map(s => s.season))];
+    // Calculate season ranks
+    const seasonRanks = new Map<string, number>()
+    const seasons = [...new Set(standingsArray.map(s => s.season))]
     
     for (const season of seasons) {
       const seasonStandings = standingsArray
         .filter(s => s.season === season)
         .sort((a, b) => {
-          const aCombined = a.h2hWins + a.medianWins;
-          const bCombined = b.h2hWins + b.medianWins;
-          if (aCombined !== bCombined) return bCombined - aCombined;
-          return b.pointsFor - a.pointsFor;
-        });
+          const aCombined = a.h2hWins + a.medianWins
+          const bCombined = b.h2hWins + b.medianWins
+          if (aCombined !== bCombined) return bCombined - aCombined
+          return b.pointsFor - a.pointsFor
+        })
       
       seasonStandings.forEach((s, index) => {
-        seasonRanks.set(`${s.managerId}-${s.season}`, index + 1);
-      });
+        seasonRanks.set(`${s.managerId}-${s.season}`, index + 1)
+      })
     }
     
     // Build standings with derived stats
@@ -183,26 +196,26 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       },
       weeksPlayed: row.weeksPlayed,
       seasonRank: seasonRanks.get(`${row.managerId}-${row.season}`) || 0,
-    }));
+    }))
     
     // Sort by combined wins desc, then points for desc
     standings.sort((a, b) => {
-      const aCombined = a.record.combined.wins;
-      const bCombined = b.record.combined.wins;
-      if (aCombined !== bCombined) return bCombined - aCombined;
-      return b.points.for - a.points.for;
-    });
+      const aCombined = a.record.combined.wins
+      const bCombined = b.record.combined.wins
+      if (aCombined !== bCombined) return bCombined - aCombined
+      return b.points.for - a.points.for
+    })
     
-    // Calculate ranks across all entries (for "All Seasons" view)
-    const sortedByPF = [...standings].sort((a, b) => b.points.for - a.points.for);
-    const sortedByPA = [...standings].sort((a, b) => b.points.against - a.points.against);
-    const sortedByAllPlay = [...standings].sort((a, b) => b.record.allPlay.wins - a.record.allPlay.wins);
+    // Calculate ranks
+    const sortedByPF = [...standings].sort((a, b) => b.points.for - a.points.for)
+    const sortedByPA = [...standings].sort((a, b) => b.points.against - a.points.against)
+    const sortedByAllPlay = [...standings].sort((a, b) => b.record.allPlay.wins - a.record.allPlay.wins)
     
-    const pfRankMap = new Map(sortedByPF.map((s, i) => [`${s.managerId}-${s.season}`, i + 1]));
-    const paRankMap = new Map(sortedByPA.map((s, i) => [`${s.managerId}-${s.season}`, i + 1]));
-    const allPlayRankMap = new Map(sortedByAllPlay.map((s, i) => [`${s.managerId}-${s.season}`, i + 1]));
+    const pfRankMap = new Map(sortedByPF.map((s, i) => [`${s.managerId}-${s.season}`, i + 1]))
+    const paRankMap = new Map(sortedByPA.map((s, i) => [`${s.managerId}-${s.season}`, i + 1]))
+    const allPlayRankMap = new Map(sortedByAllPlay.map((s, i) => [`${s.managerId}-${s.season}`, i + 1]))
     
-    // Add overall rank and all ranking data
+    // Add rankings
     const rankedStandings = standings.map((row, index) => ({
       ...row,
       rank: index + 1,
@@ -218,11 +231,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           rank: allPlayRankMap.get(`${row.managerId}-${row.season}`) || 0,
         },
       },
-    }));
+    }))
     
-    // Get the playoff week start for display
-    const displaySeason = seasonParam ? parseInt(seasonParam) : league.current_season;
-    const playoffWeekStart = playoffStartMap.get(displaySeason) || 15;
+    const displaySeason = seasonParam ? parseInt(seasonParam) : league.current_season
+    const playoffWeekStart = playoffStartMap.get(displaySeason) || 15
     
     return NextResponse.json({
       success: true,
@@ -234,13 +246,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       totalEntries: rankedStandings.length,
       seasons: seasons.sort((a, b) => b - a),
       standings: rankedStandings,
-    });
+    })
     
   } catch (error) {
-    console.error('Standings query failed:', error);
+    console.error('Standings query failed:', error)
     return NextResponse.json(
       { success: false, error: String(error) },
       { status: 500 }
-    );
+    )
   }
 }

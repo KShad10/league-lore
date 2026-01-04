@@ -1,163 +1,155 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
 
 interface RouteParams {
-  params: Promise<{ leagueId: string }>;
+  params: Promise<{ leagueId: string }>
 }
 
 interface WeeklyResult {
-  season: number;
-  week: number;
-  h2h_win: boolean | null;
-  median_win: boolean | null;
+  season: number
+  week: number
+  h2h_win: boolean | null
+  median_win: boolean | null
 }
 
 interface StreakInfo {
-  length: number;
-  manager?: string;
-  managerId?: string;
-  season?: number;
-  startWeek?: number;
-  endWeek?: number;
+  length: number
+  manager?: string
+  managerId?: string
+  season?: number
+  startWeek?: number
+  endWeek?: number
 }
 
 function calculateSingleTypeStreak(
   results: WeeklyResult[],
   type: 'h2h' | 'median'
 ): { type: 'W' | 'L' | null; length: number } {
-  if (results.length === 0) return { type: null, length: 0 };
+  if (results.length === 0) return { type: null, length: 0 }
   
   const sorted = [...results].sort((a, b) => {
-    if (a.season !== b.season) return b.season - a.season;
-    return b.week - a.week;
-  });
+    if (a.season !== b.season) return b.season - a.season
+    return b.week - a.week
+  })
   
-  const values = sorted.map(r => type === 'h2h' ? r.h2h_win : r.median_win);
-  const validValues = values.filter(v => v !== null) as boolean[];
+  const values = sorted.map(r => type === 'h2h' ? r.h2h_win : r.median_win)
+  const validValues = values.filter(v => v !== null) as boolean[]
   
-  if (validValues.length === 0) return { type: null, length: 0 };
+  if (validValues.length === 0) return { type: null, length: 0 }
   
-  const firstResult = validValues[0];
-  let count = 0;
+  const firstResult = validValues[0]
+  let count = 0
   
   for (const val of validValues) {
     if (val === firstResult) {
-      count++;
+      count++
     } else {
-      break;
+      break
     }
   }
   
   return {
     type: firstResult ? 'W' : 'L',
     length: count,
-  };
+  }
 }
 
 function calculateCombinedStreak(
   results: WeeklyResult[]
 ): { type: 'W' | 'L' | null; length: number } {
-  if (results.length === 0) return { type: null, length: 0 };
+  if (results.length === 0) return { type: null, length: 0 }
   
   const sorted = [...results].sort((a, b) => {
-    if (a.season !== b.season) return b.season - a.season;
-    return b.week - a.week;
-  });
+    if (a.season !== b.season) return b.season - a.season
+    return b.week - a.week
+  })
   
-  const flatResults: ('W' | 'L')[] = [];
+  const flatResults: ('W' | 'L')[] = []
   for (const week of sorted) {
-    if (week.median_win === null && week.h2h_win === null) continue;
+    if (week.median_win === null && week.h2h_win === null) continue
     if (week.median_win !== null) {
-      flatResults.push(week.median_win ? 'W' : 'L');
+      flatResults.push(week.median_win ? 'W' : 'L')
     }
     if (week.h2h_win !== null) {
-      flatResults.push(week.h2h_win ? 'W' : 'L');
+      flatResults.push(week.h2h_win ? 'W' : 'L')
     }
   }
   
-  if (flatResults.length === 0) return { type: null, length: 0 };
+  if (flatResults.length === 0) return { type: null, length: 0 }
   
-  const streakType = flatResults[0];
-  let streakLength = 0;
+  const streakType = flatResults[0]
+  let streakLength = 0
   
   for (const result of flatResults) {
     if (result === streakType) {
-      streakLength++;
+      streakLength++
     } else {
-      break;
+      break
     }
   }
   
-  return { type: streakType, length: streakLength };
+  return { type: streakType, length: streakLength }
 }
 
-/**
- * Find the longest streak with details (start/end week, season)
- */
 function findLongestStreakWithDetails(
   results: WeeklyResult[],
   resultType: 'h2h' | 'median' | 'combined',
   winOrLoss: 'W' | 'L'
 ): { length: number; season: number; startWeek: number; endWeek: number } {
   const sorted = [...results].sort((a, b) => {
-    if (a.season !== b.season) return a.season - b.season;
-    return a.week - b.week;
-  });
+    if (a.season !== b.season) return a.season - b.season
+    return a.week - b.week
+  })
   
   interface GameResult {
-    season: number;
-    week: number;
-    result: boolean;
+    season: number
+    week: number
+    result: boolean
   }
   
-  const flatResults: GameResult[] = [];
+  const flatResults: GameResult[] = []
   
   if (resultType === 'combined') {
     for (const week of sorted) {
       if (week.h2h_win !== null) {
-        flatResults.push({ season: week.season, week: week.week, result: week.h2h_win });
+        flatResults.push({ season: week.season, week: week.week, result: week.h2h_win })
       }
       if (week.median_win !== null) {
-        flatResults.push({ season: week.season, week: week.week, result: week.median_win });
+        flatResults.push({ season: week.season, week: week.week, result: week.median_win })
       }
     }
   } else {
     for (const week of sorted) {
-      const val = resultType === 'h2h' ? week.h2h_win : week.median_win;
+      const val = resultType === 'h2h' ? week.h2h_win : week.median_win
       if (val !== null) {
-        flatResults.push({ season: week.season, week: week.week, result: val });
+        flatResults.push({ season: week.season, week: week.week, result: val })
       }
     }
   }
   
-  const targetValue = winOrLoss === 'W';
-  let maxStreak = 0;
-  let currentStreak = 0;
-  let maxStreakStart = 0;
-  let maxStreakEnd = 0;
-  let currentStreakStart = 0;
+  const targetValue = winOrLoss === 'W'
+  let maxStreak = 0
+  let currentStreak = 0
+  let maxStreakStart = 0
+  let maxStreakEnd = 0
+  let currentStreakStart = 0
   
   for (let i = 0; i < flatResults.length; i++) {
     if (flatResults[i].result === targetValue) {
-      if (currentStreak === 0) currentStreakStart = i;
-      currentStreak++;
+      if (currentStreak === 0) currentStreakStart = i
+      currentStreak++
       if (currentStreak > maxStreak) {
-        maxStreak = currentStreak;
-        maxStreakStart = currentStreakStart;
-        maxStreakEnd = i;
+        maxStreak = currentStreak
+        maxStreakStart = currentStreakStart
+        maxStreakEnd = i
       }
     } else {
-      currentStreak = 0;
+      currentStreak = 0
     }
   }
   
   if (maxStreak === 0 || flatResults.length === 0) {
-    return { length: 0, season: 0, startWeek: 0, endWeek: 0 };
+    return { length: 0, season: 0, startWeek: 0, endWeek: 0 }
   }
   
   return {
@@ -165,87 +157,101 @@ function findLongestStreakWithDetails(
     season: flatResults[maxStreakStart].season,
     startWeek: flatResults[maxStreakStart].week,
     endWeek: flatResults[maxStreakEnd].week,
-  };
+  }
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
-  const { leagueId } = await params;
-  const { searchParams } = new URL(request.url);
-  const seasonParam = searchParams.get('season');
-  const includePlayoffs = searchParams.get('playoffs') === 'true';
+  const { leagueId } = await params
+  const { searchParams } = new URL(request.url)
+  const seasonParam = searchParams.get('season')
+  const includePlayoffs = searchParams.get('playoffs') === 'true'
   
   try {
+    const supabase = await createClient()
+    
+    // Verify user is authenticated
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+    
     const { data: league, error: leagueError } = await supabase
       .from('leagues')
       .select('current_season')
       .eq('id', leagueId)
-      .single();
+      .single()
     
     if (leagueError) {
       return NextResponse.json(
         { success: false, error: `League not found: ${leagueError.message}` },
         { status: 404 }
-      );
+      )
     }
     
     const { data: settingsHistory } = await supabase
       .from('league_settings_history')
-      .select('season, league_settings, scoring_settings')
-      .eq('league_id', leagueId);
+      .select('season, scoring_settings')
+      .eq('league_id', leagueId)
     
-    const playoffStartMap = new Map<number, number>();
+    const playoffStartMap = new Map<number, number>()
     if (settingsHistory) {
       for (const settings of settingsHistory) {
-        const playoffStart = 
-          settings.league_settings?.playoff_week_start ||
-          settings.scoring_settings?.playoff_week_start ||
-          15;
-        playoffStartMap.set(settings.season, playoffStart);
+        const playoffStart = settings.scoring_settings?.playoff_week_start || 15
+        playoffStartMap.set(settings.season, playoffStart)
       }
     }
     
     const { data: managers, error: managersError } = await supabase
       .from('managers')
       .select('id, current_username, display_name')
-      .eq('league_id', leagueId);
+      .eq('league_id', leagueId)
     
     if (managersError) {
       return NextResponse.json(
         { success: false, error: managersError.message },
         { status: 500 }
-      );
+      )
     }
     
-    const managerNameMap = new Map(managers.map(m => [m.id, m.display_name || m.current_username]));
+    if (!managers || managers.length === 0) {
+      return NextResponse.json({
+        success: true,
+        leagueId,
+        streaks: []
+      })
+    }
     
     let query = supabase
       .from('weekly_scores')
       .select('manager_id, season, week, h2h_win, median_win')
       .eq('league_id', leagueId)
       .order('season', { ascending: true })
-      .order('week', { ascending: true });
+      .order('week', { ascending: true })
     
     if (seasonParam) {
-      query = query.eq('season', parseInt(seasonParam));
+      query = query.eq('season', parseInt(seasonParam))
     }
     
-    const { data: allScores, error: scoresError } = await query;
+    const { data: allScores, error: scoresError } = await query
     
     if (scoresError) {
       return NextResponse.json(
         { success: false, error: scoresError.message },
         { status: 500 }
-      );
+      )
     }
     
     const filteredScores = includePlayoffs
-      ? allScores
-      : allScores.filter(row => {
-          const playoffStart = playoffStartMap.get(row.season) || 15;
-          return row.week < playoffStart;
-        });
+      ? (allScores || [])
+      : (allScores || []).filter(row => {
+          const playoffStart = playoffStartMap.get(row.season) || 15
+          return row.week < playoffStart
+        })
     
-    const isAllSeasons = !seasonParam;
+    const isAllSeasons = !seasonParam
     
     // Calculate streaks for each manager
     const streaks = managers.map(manager => {
@@ -256,18 +262,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           week: s.week,
           h2h_win: s.h2h_win,
           median_win: s.median_win,
-        }));
+        }))
       
-      const h2hStreak = calculateSingleTypeStreak(managerResults, 'h2h');
-      const medianStreak = calculateSingleTypeStreak(managerResults, 'median');
-      const combinedStreak = calculateCombinedStreak(managerResults);
+      const h2hStreak = calculateSingleTypeStreak(managerResults, 'h2h')
+      const medianStreak = calculateSingleTypeStreak(managerResults, 'median')
+      const combinedStreak = calculateCombinedStreak(managerResults)
       
-      const longestH2hWin = findLongestStreakWithDetails(managerResults, 'h2h', 'W');
-      const longestH2hLoss = findLongestStreakWithDetails(managerResults, 'h2h', 'L');
-      const longestMedianWin = findLongestStreakWithDetails(managerResults, 'median', 'W');
-      const longestMedianLoss = findLongestStreakWithDetails(managerResults, 'median', 'L');
-      const longestCombinedWin = findLongestStreakWithDetails(managerResults, 'combined', 'W');
-      const longestCombinedLoss = findLongestStreakWithDetails(managerResults, 'combined', 'L');
+      const longestH2hWin = findLongestStreakWithDetails(managerResults, 'h2h', 'W')
+      const longestH2hLoss = findLongestStreakWithDetails(managerResults, 'h2h', 'L')
+      const longestMedianWin = findLongestStreakWithDetails(managerResults, 'median', 'W')
+      const longestMedianLoss = findLongestStreakWithDetails(managerResults, 'median', 'L')
+      const longestCombinedWin = findLongestStreakWithDetails(managerResults, 'combined', 'W')
+      const longestCombinedLoss = findLongestStreakWithDetails(managerResults, 'combined', 'L')
       
       return {
         managerId: manager.id,
@@ -304,38 +310,36 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           },
         },
         weeksPlayed: managerResults.length,
-      };
-    });
+      }
+    })
     
-    // Sort based on view mode
+    // Sort
     if (isAllSeasons) {
-      // Sort by longest combined win streak
-      streaks.sort((a, b) => b.longestStreaks.combined.win.length - a.longestStreaks.combined.win.length);
+      streaks.sort((a, b) => b.longestStreaks.combined.win.length - a.longestStreaks.combined.win.length)
     } else {
-      // Sort by current combined streak
       streaks.sort((a, b) => {
         const aValue = a.currentStreaks.combined.type === 'W' 
           ? a.currentStreaks.combined.length 
           : a.currentStreaks.combined.type === 'L'
           ? -a.currentStreaks.combined.length
-          : 0;
+          : 0
         const bValue = b.currentStreaks.combined.type === 'W' 
           ? b.currentStreaks.combined.length 
           : b.currentStreaks.combined.type === 'L'
           ? -b.currentStreaks.combined.length
-          : 0;
-        return bValue - aValue;
-      });
+          : 0
+        return bValue - aValue
+      })
     }
     
-    // Find league records with details
+    // Find league records
     const findRecordHolder = (
       type: 'h2h' | 'median' | 'combined',
       winOrLoss: 'win' | 'loss'
     ): StreakInfo => {
-      let best: StreakInfo = { length: 0 };
+      let best: StreakInfo = { length: 0 }
       for (const streak of streaks) {
-        const streakData = streak.longestStreaks[type][winOrLoss];
+        const streakData = streak.longestStreaks[type][winOrLoss]
         if (streakData.length > best.length) {
           best = {
             length: streakData.length,
@@ -344,14 +348,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             season: streakData.season,
             startWeek: streakData.startWeek,
             endWeek: streakData.endWeek,
-          };
+          }
         }
       }
-      return best;
-    };
+      return best
+    }
     
-    const season = seasonParam ? parseInt(seasonParam) : league.current_season;
-    const playoffWeekStart = playoffStartMap.get(season) || 15;
+    const season = seasonParam ? parseInt(seasonParam) : league.current_season
+    const playoffWeekStart = playoffStartMap.get(season) || 15
     
     return NextResponse.json({
       success: true,
@@ -370,13 +374,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         combinedWin: findRecordHolder('combined', 'win'),
         combinedLoss: findRecordHolder('combined', 'loss'),
       },
-    });
+    })
     
   } catch (error) {
-    console.error('Streaks query failed:', error);
+    console.error('Streaks query failed:', error)
     return NextResponse.json(
       { success: false, error: String(error) },
       { status: 500 }
-    );
+    )
   }
 }

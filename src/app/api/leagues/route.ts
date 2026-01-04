@@ -16,7 +16,7 @@ export async function GET() {
     // Check if user has any leagues
     const { data: leagues, error: leaguesError } = await supabase
       .from('leagues')
-      .select('id, name, sleeper_league_id, current_season, last_sync_at')
+      .select('id, name, sleeper_league_id, team_count, first_season, current_season, last_sync_at')
       .eq('user_id', user.id)
       .order('last_sync_at', { ascending: false })
 
