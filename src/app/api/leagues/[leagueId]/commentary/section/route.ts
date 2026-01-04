@@ -200,7 +200,7 @@ async function fetchSectionData(
   }>();
 
   for (const row of seasonScores || []) {
-    const manager = row.managers as { display_name: string; current_username: string } | null;
+    const manager = row.managers as unknown as { display_name: string; current_username: string } | null;
     if (!manager) continue;
     const name = manager.display_name || manager.current_username;
     const existing = managerStats.get(row.manager_id) || {
