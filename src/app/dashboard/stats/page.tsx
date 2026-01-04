@@ -1187,8 +1187,8 @@ function StreaksContent({
                       <span className="text-win font-bold">{record.length as number}W</span>
                       <span className="text-muted ml-2">
                         {record.manager as string}
-                        {isAllSeasons && ` (${record.season})`} Wk {record.startWeek}-
-                        {record.endWeek}
+                        {isAllSeasons && ` (${record.season})`} Wk {record.startWeek as number}-
+                        {record.endWeek as number}
                       </span>
                     </span>
                   </div>
@@ -1211,8 +1211,8 @@ function StreaksContent({
                       <span className="text-loss font-bold">{record.length as number}L</span>
                       <span className="text-muted ml-2">
                         {record.manager as string}
-                        {isAllSeasons && ` (${record.season})`} Wk {record.startWeek}-
-                        {record.endWeek}
+                        {isAllSeasons && ` (${record.season})`} Wk {record.startWeek as number}-
+                        {record.endWeek as number}
                       </span>
                     </span>
                   </div>

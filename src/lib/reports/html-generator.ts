@@ -447,7 +447,34 @@ export function generateHtmlDocument(
 }
 
 // Component builders
-export const html = {
+
+// Type for matchup card data (extracted to avoid circular reference)
+export interface MatchupCardData {
+  type?: string;
+  week?: number;
+  team1: { name: string; seed?: number; score: number; isWinner: boolean };
+  team2: { name: string; seed?: number; score: number; isWinner: boolean };
+  margin: number;
+  cardClass?: string;
+}
+
+export const html: {
+  title: (text: string) => string;
+  subtitle: (text: string) => string;
+  section: (title: string, content: string) => string;
+  subsection: (title: string, content: string) => string;
+  paragraph: (text: string) => string;
+  statGrid: (stats: Array<{ label: string; value: string | number; detail?: string; color?: string }>) => string;
+  table: (headers: string[], rows: string[][], options?: { highlightRows?: number[] }) => string;
+  matchupCard: (matchup: MatchupCardData) => string;
+  matchupGrid: (matchups: MatchupCardData[]) => string;
+  callout: (text: string) => string;
+  highlightBox: (text: string) => string;
+  badge: (text: string, type?: 'gold' | 'silver' | 'bronze' | 'toilet' | 'green' | 'rust') => string;
+  awardCard: (award: { icon: string; title: string; winner: string; stat: string }) => string;
+  pageBreak: () => string;
+  noBreak: (content: string) => string;
+} = {
   title: (text: string) => `<h1 class="report-title">${text}</h1>`,
   
   subtitle: (text: string) => `<div class="report-subtitle">${text}</div>`,
@@ -494,14 +521,7 @@ export const html = {
     `;
   },
   
-  matchupCard: (matchup: {
-    type?: string;
-    week?: number;
-    team1: { name: string; seed?: number; score: number; isWinner: boolean };
-    team2: { name: string; seed?: number; score: number; isWinner: boolean };
-    margin: number;
-    cardClass?: string;
-  }) => `
+  matchupCard: (matchup: MatchupCardData) => `
     <div class="matchup-card ${matchup.cardClass || ''}">
       <div class="matchup-header">
         <span>${matchup.type || 'Matchup'}</span>
@@ -529,7 +549,7 @@ export const html = {
     </div>
   `,
   
-  matchupGrid: (matchups: Parameters<typeof html.matchupCard>[0][]) => `
+  matchupGrid: (matchups: MatchupCardData[]) => `
     <div class="matchup-grid">
       ${matchups.map(m => html.matchupCard(m)).join('')}
     </div>
