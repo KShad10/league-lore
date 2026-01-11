@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { calculateMedian } from '@/lib/sleeper/stats'
+import type { LeagueRouteParams } from '@/lib/api/types'
 
-interface RouteParams {
-  params: Promise<{ leagueId: string }>
-}
-
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: LeagueRouteParams) {
   const { leagueId } = await params
   const { searchParams } = new URL(request.url)
   const season = searchParams.get('season')
@@ -132,14 +130,4 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       { status: 500 }
     )
   }
-}
-
-function calculateMedian(numbers: number[]): number {
-  if (numbers.length === 0) return 0
-  const sorted = [...numbers].sort((a, b) => a - b)
-  const mid = Math.floor(sorted.length / 2)
-  if (sorted.length % 2 === 0) {
-    return (sorted[mid - 1] + sorted[mid]) / 2
-  }
-  return sorted[mid]
 }

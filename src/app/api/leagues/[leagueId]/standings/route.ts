@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-
-interface RouteParams {
-  params: Promise<{ leagueId: string }>
-}
+import type { LeagueRouteParams } from '@/lib/api/types'
+import {
+  getPlayoffStartMap,
+  filterRegularSeason,
+  extractManagerName,
+  parseSeason,
+  parseBoolean,
+  round,
+} from '@/lib/api/utils'
+import { roundTo2 } from '@/lib/sleeper/stats'
 
 interface StandingRow {
   managerId: string
@@ -21,11 +27,11 @@ interface StandingRow {
   weeksPlayed: number
 }
 
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: LeagueRouteParams) {
   const { leagueId } = await params
   const { searchParams } = new URL(request.url)
-  const seasonParam = searchParams.get('season')
-  const includePlayoffs = searchParams.get('playoffs') === 'true'
+  const seasonParam = parseSeason(searchParams)
+  const includePlayoffs = parseBoolean(searchParams, 'playoffs')
   
   try {
     const supabase = await createClient()
@@ -53,20 +59,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       )
     }
     
-    // Get league settings history for playoff week starts
-    const { data: settingsHistory } = await supabase
-      .from('league_settings_history')
-      .select('season, scoring_settings')
-      .eq('league_id', leagueId)
-    
-    const playoffStartMap = new Map<number, number>()
-    if (settingsHistory) {
-      for (const settings of settingsHistory) {
-        const playoffStart = settings.scoring_settings?.playoff_week_start || 15
-        playoffStartMap.set(settings.season, playoffStart)
-      }
-    }
-    
+    // Get playoff week start map for all seasons
+    const playoffStartMap = await getPlayoffStartMap(supabase, leagueId)
+
     // Query weekly scores with manager info
     let query = supabase
       .from('weekly_scores')
@@ -84,8 +79,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       `)
       .eq('league_id', leagueId)
     
-    if (seasonParam) {
-      query = query.eq('season', parseInt(seasonParam))
+    if (seasonParam !== null) {
+      query = query.eq('season', seasonParam)
     }
     
     const { data, error } = await query
@@ -101,7 +96,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({
         success: true,
         leagueId,
-        season: seasonParam ? parseInt(seasonParam) : 'all',
+        season: seasonParam ? seasonParam : 'all',
         standings: [],
         message: 'No data found for this league'
       })
@@ -233,13 +228,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       },
     }))
     
-    const displaySeason = seasonParam ? parseInt(seasonParam) : league.current_season
+    const displaySeason = seasonParam ? seasonParam : league.current_season
     const playoffWeekStart = playoffStartMap.get(displaySeason) || 15
     
     return NextResponse.json({
       success: true,
       leagueId,
-      season: seasonParam ? parseInt(seasonParam) : 'all',
+      season: seasonParam ? seasonParam : 'all',
       includePlayoffs,
       regularSeasonWeeks: playoffWeekStart - 1,
       playoffWeekStart,
